@@ -10,7 +10,7 @@ This was born as a way to let LLMs quickly gather information from the physical 
 > [!WARNING]  
 > This tool uses undocumented APIs; for this reason, it may break or you may experience rate limits.
 
-## Open the dashboard
+## Install
 
 Requires Python 3.11+. Pillow is the only dependency. No API keys required.
 
@@ -18,6 +18,16 @@ Requires Python 3.11+. Pillow is the only dependency. No API keys required.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install .
+alephgeo --help
+```
+
+## Open the dashboard
+
+From the dashboard you can select an area on the map and download all the data you need.
+You can later give the resulting directory as context for the agent to work on.
+If you prefer using Aleph from the CLI or want to let an agent interface with directly see [CLI docs](docs/cli.md).
+
+```sh
 alephgeo dashboard --root captures
 ```
 
@@ -25,7 +35,7 @@ The dashboard opens in your browser. Your captures will be saved in `captures`.
 
 ## Inside the folder
 
-Each capture lives in its own `aleph-TIMESTAMP-ID` directory. Files depend on the sources you chose. Here is an overview:
+Here is an overview of the structure of the output dir after a capture:
 
 - `streetview/`: Street photos, positions and headings in GeoJSON
 - `satellite.png`: Stitched satellite imagery (original tiles in `satellite/`)
