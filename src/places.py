@@ -17,6 +17,12 @@ def number(value, name, low, high):
     return value
 
 
+def positive(value, name):
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number.")
+    return value
+
+
 def point(values):
     lat, lon = values
     number(lat, "latitude", -90, 90)
@@ -27,7 +33,7 @@ def point(values):
 def around(center, size):
     """A square in ground meters, returned in south/west/north/east order."""
     lat, lon = point(center)
-    number(size, "size", 1, 100_000)
+    positive(size, "size")
     dy = math.degrees(size / (2 * RADIUS))
     if abs(lat) + dy >= 90:
         raise ValueError("The area cannot cross a pole.")

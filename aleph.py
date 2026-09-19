@@ -67,7 +67,7 @@ def parser():
     source.add_argument("--pano-id", help="exact panorama ID")
     source.add_argument("--street", help="named street to follow from end to end")
     street.add_argument("--match", metavar="TYPE/ID", help="choose an OSM ID returned for an ambiguous name")
-    street.add_argument("--stops", type=int, help="street positions (default: 10; max: 100)")
+    street.add_argument("--stops", type=int, help="street positions (default: 10)")
     street.add_argument("--view", choices=("forward", "backward", "left", "right", "both"),
                         help="street orientation; both saves left and right (default: forward)")
     street.add_argument("--route", type=int, help="choose a returned branch of a street")
@@ -77,7 +77,7 @@ def parser():
     angle.add_argument("--look-at", nargs=2, type=float, metavar=("LAT", "LON"), help="turn a single view toward this point")
     street.add_argument("--pitch", type=float, default=0, help="vertical angle in degrees (default: 0)")
     street.add_argument("--fov", type=float, default=75, help="horizontal field of view (default: 75)")
-    street.add_argument("--radius", type=float, help="maximum panorama search distance in meters (default: 50; max: 1000)")
+    street.add_argument("--radius", type=float, help="maximum panorama search distance in meters (default: 50)")
     street.add_argument("--image-format", choices=("jpg", "png"), default="jpg")
     output(street)
     network(street)

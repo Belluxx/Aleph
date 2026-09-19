@@ -52,7 +52,7 @@ For example, `--stops 10` requests ten positions along the street. Choose a view
 If Aleph finds several places or street branches, choose from the returned options with `--match ID` or `--route N`, respectively.
 
 > [!TIP]
-> Quick requests start immediately and cache responses for 24 hours. Use `--refresh` to fetch fresh data or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`). Limits: 128 tiles per request, 16 megapixels per satellite image, and 100 street stops.
+> Quick requests start immediately and cache responses for 24 hours. Use `--refresh` to fetch fresh data or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
 
 ## Capture an area
 

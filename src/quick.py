@@ -7,15 +7,10 @@ from . import capture, places, routes, streetview
 from .common import MissingImagery, RequestError, atomic_path, now, url, write_json
 from .geo import bearing, bounds, coordinate, distance, grid, tiles
 
-MAX_TILES = 128
-MAX_PIXELS = 16_000_000
-
 
 def coverage(client, area, progress):
     g = grid(area, 17)
     count = g["rows"] * g["columns"]
-    if count > MAX_TILES:
-        raise RequestError("request_too_large", f"Quick requests allow at most {MAX_TILES} coverage tiles.")
     found = {}
     for i, tile in enumerate(tiles(g), 1):
         address = url("https://www.google.com/maps/photometa/ac/v1",
@@ -44,8 +39,9 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     places.number(heading, "heading", 0, 360)
     places.number(pitch, "pitch", -90, 90)
     places.number(fov, "fov", 20, 120)
-    places.number(radius, "radius", 1, 1000)
-    places.number(stops, "stops", 1, 100)
+    places.positive(radius, "radius")
+    if type(stops) is not int or stops < 1:
+        raise ValueError("stops must be a positive whole number.")
     if look_at is not None:
         places.point(look_at)
     selected_place, selected_route = None, None
@@ -149,8 +145,6 @@ def satellite(client, output, progress, *, at=None, place=None, match=None,
         center, selected_place = location(client, at=at, place=place, match=match, endpoint=endpoint)
         area = places.around(center, size)
     g = grid(area, zoom)
-    if g["rows"] * g["columns"] > MAX_TILES or g["width"] * g["height"] > MAX_PIXELS:
-        raise RequestError("request_too_large", "Use a smaller area or lower zoom (128 tiles / 16 megapixels maximum).")
     run = capture.plan(client, area, dict(include=["satellite"], satellite_zoom=zoom), progress)
     folder = capture.create_folder(run, output)
     try:

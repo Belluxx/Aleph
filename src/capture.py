@@ -63,8 +63,14 @@ def settings(values=None):
     if not selected or selected - set(SOURCES):
         raise ValueError("Choose one or more sources: streetview, satellite, osm.")
     options["include"] = [source for source in SOURCES if source in selected]
+    for key in ("step", "delay"):
+        value = options[key]
+        if (type(value) not in (int, float) or not math.isfinite(value)
+                or value < 0 or (key == "step" and value == 0)):
+            requirement = "positive" if key == "step" else "nonnegative"
+            raise ValueError(f"{key}: use a {requirement} finite number.")
     for key, low, high in (
-        ("step", 1, 1000), ("fov", 20, 120), ("delay", 0, 10),
+        ("fov", 20, 120),
         ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14),
     ):
         value = options[key]

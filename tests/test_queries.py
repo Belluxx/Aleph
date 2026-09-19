@@ -89,11 +89,14 @@ class QueryTests(unittest.TestCase):
             self.assertTrue(Path(result["path"]).is_file())
         self.assertEqual(self.get.call_count, 1)
 
-    def test_quick_satellite_limit_is_checked_before_network(self):
-        status, result = self.invoke("satellite", "--at", "0", "0", "--size", "100000", "--zoom", "21")
-        self.assertEqual(status, 1)
-        self.assertEqual(result["error"]["code"], "request_too_large")
-        self.get.assert_not_called()
+    def test_satellite_exceeds_former_size_tile_and_pixel_caps(self):
+        self.get.return_value = image_bytes((256, 256), "red")
+        status, result = self.invoke("satellite", "--at", "0", "0", "--size", "200001",
+                                     "--zoom", "12", "-o", str(self.directory))
+        self.assertEqual(status, 0, result)
+        self.assertGreater(result["width"] * result["height"], 16_000_000)
+        self.assertGreater(self.get.call_count, 128)
+        self.assertTrue(Path(result["path"]).is_file())
 
     def test_single_streetview_uses_actual_camera_and_look_at_without_osm(self):
         def response(address, **kwargs):
@@ -149,6 +152,12 @@ class QueryTests(unittest.TestCase):
                          [f"panorama_{i:04d}" for i in (1, 1, 2, 2, 3, 3)])
         self.assertEqual([round(p["heading"]) for p in result["photos"]], [0, 180] * 3)
         self.assertAlmostEqual(result["route"]["length_m"], 222.39, places=2)
+        status, result = self.invoke("streetview", "--street", "Test Street", "--stops", "101",
+                                     "-o", str(self.directory))
+        self.assertEqual(status, 0, result)
+        self.assertEqual(result["requested_stops"], 101)
+        self.assertEqual(result["saved_stops"], 3)
+        self.assertEqual(len(result["gaps"]), 98)
         for failure, expected_status in ((OSError("connection lost"), 1), (KeyboardInterrupt(), 130)):
             with self.subTest(failure=type(failure).__name__):
                 images = 0
@@ -162,9 +171,11 @@ class QueryTests(unittest.TestCase):
 
     def test_no_coverage_is_a_structured_error_and_does_not_create_output(self):
         self.get.return_value = coverage([])
-        status, result = self.invoke("streetview", "--at", "0", "0", "-o", str(self.directory / "output"))
+        status, result = self.invoke("streetview", "--at", "0", "0", "--radius", "2000",
+                                     "-o", str(self.directory / "output"))
         self.assertEqual(status, 1)
         self.assertEqual(result["error"]["code"], "no_coverage")
+        self.assertGreater(self.get.call_count, 128)
         self.assertFalse((self.directory / "output").exists())
 
     def test_invalid_or_conflicting_options_fail_before_requests(self):
@@ -173,9 +184,17 @@ class QueryTests(unittest.TestCase):
             ["resolve", "--at", "nan", "0"],
             ["resolve", "Rome", "--nearby"],
             ["resolve", "--at", "1", "2", "--radius", "20"],
+            ["resolve", "--at", "1", "2", "--nearby", "--radius", "5001"],
+            ["resolve", "Test", "--limit", "51"],
+            ["resolve", "--at", "1", "2", "--nearby", "--limit", "51"],
             ["streetview", "--at", "0", "0", "--place", "Rome"],
             ["streetview", "--at", "0", "0", "--stops", "10"],
             ["streetview", "--street", "Test", "--heading", "90"],
+            ["streetview", "--street", "Test", "--stops", "0"],
+            ["streetview", "--at", "0", "0", "--radius", "0"],
+            ["streetview", "--at", "0", "0", "--radius", "inf"],
+            ["satellite", "--at", "0", "0", "--size", "0"],
+            ["satellite", "--at", "0", "0", "--size", "nan"],
             ["satellite", "--tile", "19/1"],
             ["satellite", "--tile", "1/2/0"],
             ["satellite", "--tile", "19/1/1", "--zoom", "20"],

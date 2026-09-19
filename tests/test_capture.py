@@ -36,6 +36,17 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.client.get.side_effect = AssertionError("Unexpected image download")
         self.client.overpass.side_effect = AssertionError("Unexpected OSM download")
 
+    def test_spacing_and_delay_require_valid_numbers_without_workload_caps(self):
+        for step in (0.5, 2000):
+            options = capture.settings(dict(step=step, delay=60))
+            self.assertEqual((options["step"], options["delay"]), (step, 60))
+        self.assertEqual(capture.settings(dict(delay=0))["delay"], 0)
+        for key, values in (("step", (0, -1, float("inf"), float("nan"))),
+                            ("delay", (-1, float("inf"), float("nan")))):
+            for value in values:
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    capture.settings({key: value})
+
     def test_interrupted_second_side_resumes_from_saved_checkpoint(self):
         photo = image_bytes((1024, 576), "red")
         for error, state in ((KeyboardInterrupt(), "stopped"), (OSError("offline"), "failed")):
