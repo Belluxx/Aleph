@@ -2,10 +2,10 @@
 
 Aleph does two things:
 
-- Lets you draw a rectangle on the map and download everything about it (buildings, elevation, HD satellite imagery, Street View photos).
-- Provides any of the above information for specific points on Earth, on the fly.
+- Lets you draw a rectangle on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos).
+- Provides any of the above information for **specific points** on Earth, on the fly.
 
-This tool was born as a way to let LLMs quickly gather information from the physical world.
+This was born as a way to let LLMs quickly gather information from the physical world, but you can just use it to have piece of the Earth on your laptop and do whatever you want with it.
 
 > [!WARNING]  
 > This tool uses undocumented APIs; for this reason, it may break or you may experience rate limits.
@@ -27,12 +27,10 @@ The dashboard opens in your browser. Your captures will be saved in `captures`.
 
 Each capture lives in its own `aleph-TIMESTAMP-ID` directory. Files depend on the sources you chose. Here is an overview:
 
-| File | Contents |
-| --- | --- |
-| `streetview/` | Street photos, positions and headings in GeoJSON |
-| `satellite.png` | Stitched satellite imagery (original tiles in `satellite/`) |
-| `map.osm` | OpenStreetMap roads, buildings, water, and other features |
-| `terrain.tif` | Elevation as a GeoTIFF (original tiles in `terrain/`) |
+- `streetview/`: Street photos, positions and headings in GeoJSON
+- `satellite.png`: Stitched satellite imagery (original tiles in `satellite/`)
+- `map.osm`: OpenStreetMap roads, buildings, water, and other features
+- `terrain.tif`: Elevation as a GeoTIFF (original tiles in `terrain/`)
 
 ## From the terminal (for scripts and agents)
 
