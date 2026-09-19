@@ -1,0 +1,166 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlsplit
+
+from PIL import Image
+
+from src import capture, geo
+from src.common import Client, MissingImagery
+from tests.fixtures import image_bytes, metadata, terrain_bytes
+
+
+def street_run():
+    return dict(
+        format="aleph-python", version=capture.FORMAT_VERSION,
+        bounds=[-0.001, -0.001, 0.001, 0.001],
+        options=capture.settings(dict(include=["streetview"])),
+        started_at="2024-06-01T00:00:00+00:00", state="planned",
+        stages=[dict(
+            mode="streetview", results=[],
+            paths=[dict(id="way-1-1", osm_id=1, name="Main Road", highway="residential",
+                        layer="0", points=[[0, -0.001], [0, 0.001]])],
+            samples=[dict(pano_id="panorama_0001", lat=0, lon=0, heading=90,
+                          path_index=0, path_meters=111, stop_in_path=1)],
+        )],
+    )
+
+
+class CaptureRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.progress = Mock()
+        self.client = Mock(spec=Client)
+        self.client.get.side_effect = AssertionError("Unexpected image download")
+        self.client.overpass.side_effect = AssertionError("Unexpected OSM download")
+
+    def test_interrupted_second_side_resumes_from_saved_checkpoint(self):
+        photo = image_bytes((1024, 576), "red")
+        for error, state in ((KeyboardInterrupt(), "stopped"), (OSError("offline"), "failed")):
+            with self.subTest(state=state):
+                folder = self.folder / state
+                folder.mkdir()
+                run = street_run()
+                self.client.get.side_effect = [metadata(), photo, error]
+                with self.assertRaises(type(error)) as raised:
+                    capture.download(run, folder, self.client, self.progress)
+                self.assertIs(raised.exception, error)
+                saved = capture.load(folder)
+                self.assertEqual(saved["state"], state)
+                results = saved["stages"][0]["results"]
+                self.assertEqual([(p["side"], p["heading"]) for p in results], [("left", 0)])
+                first = folder / results[0]["filename"]
+                original = first.read_bytes()
+                self.assertTrue(saved["exports_saved"])
+
+                self.client.get.reset_mock()
+                self.client.get.side_effect = [metadata(), photo]
+                capture.download(saved, folder, self.client, self.progress)
+                completed = capture.load(folder)
+                self.assertEqual(completed["state"], "complete")
+                self.assertNotIn("error", completed)
+                self.assertIn("finished_at", completed)
+                self.assertEqual(first.read_bytes(), original)
+                self.assertEqual([(p["side"], p["heading"]) for p in completed["stages"][0]["results"]],
+                                 [("left", 0), ("right", 180)])
+                self.assertEqual(self.client.get.call_count, 2)  # Metadata, then only the missing side.
+                request = self.client.get.call_args_list[-1].args[0]
+                self.assertEqual(parse_qs(urlsplit(request).query)["yaw"], ["180"])
+                exported = json.loads((folder / "streetview/photos.geojson").read_bytes())
+                self.assertEqual(len(exported["features"]), 2)
+
+    def test_missing_imagery_skips_one_side_and_exports_only_saved_photos(self):
+        run = street_run()
+        self.client.get.side_effect = [metadata(), MissingImagery("removed"), image_bytes((1024, 576), "blue")]
+        capture.download(run, self.folder, self.client, self.progress)
+        saved = capture.load(self.folder)
+        self.assertEqual(saved["state"], "complete")
+        self.assertEqual([p["status"] for p in saved["stages"][0]["results"]], ["skipped", "saved"])
+        exported = json.loads((self.folder / "streetview/photos.geojson").read_bytes())
+        self.assertEqual([p["properties"]["side"] for p in exported["features"]], ["right"])
+
+    def test_changed_panorama_or_invalid_image_does_not_advance_checkpoint(self):
+        responses = {
+            "changed identity": [metadata(pano_id="panorama_0002")],
+            "moved panorama": [metadata(lat=0.001)],
+            "wrong dimensions": [metadata(), image_bytes((256, 256), "red")],
+            "undecodable image": [metadata(), b"not an image"],
+        }
+        for name, response in responses.items():
+            with self.subTest(case=name):
+                run = street_run()
+                self.client.get.reset_mock()
+                self.client.get.side_effect = response
+                with self.assertRaises((ValueError, OSError)):
+                    capture.download(run, self.folder, self.client, self.progress)
+                saved = capture.load(self.folder)
+                self.assertEqual(saved["state"], "failed")
+                self.assertEqual(saved["stages"][0]["results"], [])
+                self.assertEqual(self.client.get.call_count, len(response))
+                self.assertFalse((self.folder / "streetview/photos").exists())
+
+    def test_failed_satellite_export_resumes_offline_and_crops_tiles_correctly(self):
+        north, west = geo.coordinate(384, 384, 2)
+        south, east = geo.coordinate(640, 640, 2)
+        run = capture.plan(self.client, [south, west, north, east],
+                           dict(include=["satellite"], satellite_zoom=2), self.progress)
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
+        self.client.get.side_effect = [image_bytes((256, 256), color) for color in colors]
+        with patch.object(Image.Image, "save", side_effect=OSError("export disk full")):
+            with self.assertRaisesRegex(OSError, "export disk full"):
+                capture.download(run, self.folder, self.client, self.progress)
+        saved = capture.load(self.folder)
+        self.assertEqual(saved["state"], "failed")
+        self.assertFalse(saved["exports_saved"])
+        self.assertEqual(len(saved["stages"][0]["results"]), 4)
+
+        self.client.get.reset_mock()
+        self.client.get.side_effect = AssertionError("Saved tiles must not be downloaded again")
+        capture.download(saved, self.folder, self.client, self.progress)
+        self.client.get.assert_not_called()
+        self.assertEqual(capture.load(self.folder)["state"], "complete")
+        with Image.open(self.folder / "satellite.png") as mosaic:
+            self.assertEqual(mosaic.size, (256, 256))
+            self.assertEqual([mosaic.getpixel(point) for point in ((0, 0), (255, 0), (0, 255), (255, 255))],
+                             [(*color, 255) for color in colors])
+
+    def test_osm_failure_still_saves_terrain_and_resume_fetches_only_map(self):
+        run = capture.plan(self.client, [1, 1, 2, 2],
+                           dict(include=["osm"], terrain_zoom=1), self.progress)
+        failure = OSError("Overpass unavailable")
+        self.client.overpass.side_effect = failure
+        self.client.get.side_effect = [terrain_bytes(1, 0, 1)]
+        with self.assertRaises(OSError) as raised:
+            capture.download(run, self.folder, self.client, self.progress)
+        self.assertIs(raised.exception, failure)
+        saved = capture.load(self.folder)
+        self.assertEqual(saved["state"], "failed")
+        self.assertTrue(saved["exports_saved"])
+        self.assertEqual(len(saved["stages"][0]["results"]), 1)
+        mosaic = (self.folder / "terrain.tif").read_bytes()
+        self.assertFalse((self.folder / "map.osm").exists())
+
+        osm = b'<osm version="0.6"><node id="1" lat="1" lon="1"/><way id="2"><nd ref="1"/></way></osm>'
+        self.client.overpass.side_effect = [osm]
+        self.client.get.reset_mock()
+        self.client.get.side_effect = AssertionError("Completed terrain must not be downloaded again")
+        capture.download(saved, self.folder, self.client, self.progress)
+        self.client.get.assert_not_called()
+        self.assertEqual((self.folder / "map.osm").read_bytes(), osm)
+        self.assertEqual((self.folder / "terrain.tif").read_bytes(), mosaic)
+        completed = capture.load(self.folder)
+        self.assertEqual(completed["state"], "complete")
+        self.assertEqual(len(completed["stages"][0]["results"]), 2)
+
+    def test_osm_rejects_incomplete_ways_but_allows_distant_relation_members(self):
+        invalid = (
+            b'<osm><remark>runtime error: timeout</remark></osm>',
+            b'<osm><way id="1"><nd ref="99"/></way></osm>',
+            b'<osm><node id="1" lat="0" lon="0"/><node id="1" lat="0" lon="0"/></osm>',
+        )
+        for data in invalid:
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                capture.validate_osm(data)
+        capture.validate_osm(b'<osm><relation id="1"><member type="way" ref="99" role="outer"/></relation></osm>')

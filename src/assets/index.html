@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aleph capture dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/vendor/maplibre-gl.js"></script>
+  <script defer src="/vendor/osmtogeojson.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Capture library">
+      <a class="brand" href="/" aria-label="Aleph home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 96 96" fill="none">
+            <defs>
+              <clipPath id="aleph-world"><circle cx="48" cy="48" r="36"/></clipPath>
+              <filter id="aleph-ink" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+                <feTurbulence type="fractalNoise" baseFrequency=".42" numOctaves="3" seed="12" result="grain"/>
+                <feDisplacementMap in="SourceGraphic" in2="grain" scale=".85" xChannelSelector="R" yChannelSelector="G"/>
+              </filter>
+            </defs>
+            <g clip-path="url(#aleph-world)">
+              <circle cx="48" cy="48" r="36" fill="#F8F1E5"/>
+              <g filter="url(#aleph-ink)" stroke="#34302B" stroke-linecap="round" stroke-linejoin="round">
+                <g stroke-width="1.5">
+                  <path d="M7 30.2C12.4 26.3 17.8 24.1 22.1 24.7 26.6 24.9 28.6 27.5 29.7 31.1 31.2 35.3 29.2 39.8 27.5 44.1 25.6 48 25.1 51.2 26.3 54.5 28.2 59.1 32.8 62.1 34.4 67 36 71 35 74.8 33.9 79.1L30.1 89"/>
+                  <path stroke-width="1.35" d="M5 43.3C9.2 39.2 13.5 36.8 16.2 37.7 19.6 38.2 20.1 40.7 19.7 43.2 19.8 47.3 17.5 51.1 17.7 56 17.4 60 18.9 63.3 21.4 66.5 24.3 70.3 27 73.1 26.1 77.7 25.9 80.2 24.2 82.2 22.8 84.2"/>
+                  <path stroke-width="1.2" d="M5 60.3C8.2 57.4 11.1 58.7 12.1 62.2 13.9 65.6 13.4 70.3 11.8 74"/>
+                  <path stroke-width="1.65" d="M53.8 8C56.1 15.1 57.3 23.2 59.8 30.1 62.2 37.4 64.4 43.9 68.9 49.8 74.2 57.1 80.4 62.1 89.2 67.3"/>
+                  <path stroke-width="1.4" d="M71.1 12C71.5 18.3 73 23.9 74.7 29.4 76.9 35.1 81.4 39.7 85.2 43.2L91.1 47"/>
+                  <path d="M43 26.2C49.4 27.2 55 26.5 61.2 25.8 67.3 25.4 72.3 24.1 77.2 25.3 80.3 25.5 82.3 27.3 85 28.1"/>
+                  <path stroke-width="1.4" d="M47 44.2C52.4 44.8 58.5 43.7 63.2 42.4 69.1 40.9 73.4 38.3 78.7 38.1 82.2 37.6 85.7 39.6 89 40.9"/>
+                  <path stroke-width="1.3" d="M55 60.2C60.1 60.8 64.7 59.1 68.6 57.1 73.4 55 77.1 53 82 53.1L88 53.3"/>
+                  <path stroke-width="1.45" d="M41.8 86C40.9 81.3 42.4 77.2 45.6 76 48.2 74.4 51.3 75.4 54.2 78.2 57.5 81 60.5 82 64.2 81.5 66.2 81.5 68.3 80 70 78.8"/>
+                </g>
+                <path fill="#F34838" stroke="none" d="M35.8 7.5C32.6 12.2 33.2 16.4 34.6 20.2 36 24.1 39.2 27.4 40.8 31.7 42.5 36 39.6 41.2 37.7 46.6 35.5 52.8 39.1 58.6 45.3 61.9 51.1 65.5 55.6 66.8 59.2 71.3 62.4 75.6 59.1 81.9 54.4 85.2L59.8 89C66.1 82 68.6 76.7 64.4 69.7 61.1 64.1 54.7 61.4 50.8 59.3 46.1 56.6 42 54.4 43.1 49.9 44.6 44.7 48 38.9 47 33.9 46.7 28.6 42.6 24.8 40.5 20.3 38.7 16.7 39.4 13.4 42 10.2Z"/>
+              </g>
+            </g>
+          </svg>
+        </span>
+        <span>Aleph</span>
+      </a>
+      <button id="new-capture" class="primary wide" disabled>New capture <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.5"/></svg></button>
+      <div class="section-title"><h2>Library <span id="capture-count" class="count">0</span></h2><button id="refresh" class="quiet" title="Refresh captures" aria-label="Refresh captures">↻</button></div>
+      <label class="search"><span class="sr-only">Filter captures by date or coordinates</span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.5"/><path d="m12 12 5 5" stroke="currentColor" stroke-width="1.5"/></svg><input id="search" type="search" placeholder="Find a capture…"></label>
+      <div id="captures" class="capture-list" aria-live="polite"><p class="muted empty-list">Loading captures…</p></div>
+      <template id="capture-actions">
+        <div class="card-actions">
+          <button data-action="resume" class="icon-button" aria-label="Resume capture" title="Resume capture"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 4.5a.75.75 0 0 1 1.14-.64l8.5 5.5a.75.75 0 0 1 0 1.28l-8.5 5.5A.75.75 0 0 1 6 15.5Z"/></svg></button>
+          <details class="card-more">
+            <summary class="icon-button" aria-label="Other capture options" title="Other options"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/></svg></summary>
+            <div class="card-options">
+              <span class="eyebrow">Other options</span>
+              <button data-action="export" title="Rebuild saved previews and exports">Rebuild exports</button>
+            </div>
+          </details>
+        </div>
+      </template>
+      <section id="job" class="job" aria-label="Capture progress" hidden>
+        <div class="job-summary" role="status" aria-atomic="true"><strong id="job-phase"></strong></div>
+        <div id="job-meter" class="job-meter">
+          <progress id="job-progress" aria-labelledby="job-phase" aria-describedby="job-detail"></progress>
+          <span id="job-detail"></span>
+        </div>
+        <button id="job-error" class="job-error" aria-label="Show capture error details" hidden>Details</button>
+        <div class="job-actions">
+          <button id="view-job" hidden>View capture</button>
+          <button id="stop-job" class="icon-button" aria-label="Stop capture" title="Stop capture"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="10" height="10"/></svg></button>
+          <button id="dismiss-job" class="quiet" hidden aria-label="Dismiss progress">✕</button>
+        </div>
+      </section>
+      <div class="root-info">Workspace<code id="root-path"></code></div>
+    </aside>
+    <aside id="capture-panel" class="capture-panel" aria-labelledby="new-capture-title" hidden>
+      <form id="capture-form" novalidate>
+        <div class="capture-panel-heading">
+          <button id="close-capture" class="back-button" type="button"><span aria-hidden="true">←</span> Back to library</button>
+          <h2 id="new-capture-title" tabindex="-1">New capture</h2>
+        </div>
+        <div class="capture-panel-body">
+          <fieldset class="area-section">
+            <legend>Area <span id="area-status" class="area-status">Required</span></legend>
+            <div id="area-summary" class="area-summary" aria-live="polite" aria-atomic="true">
+              <strong id="area-size">No area selected</strong>
+              <span id="area-dimensions" hidden></span>
+            </div>
+            <div class="area-actions"><button id="redraw-area" type="button" hidden>Redraw area</button><button id="use-view" type="button">Use visible map</button></div>
+          </fieldset>
+          <fieldset class="sources-section">
+            <legend>Sources</legend>
+            <div class="source-options">
+              <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="4"/></svg><strong>Street View</strong><input name="include" type="checkbox" value="streetview"></label>
+              <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg><strong>Satellite imagery</strong><input name="include" type="checkbox" value="satellite"></label>
+              <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m2 20 7-14 4 7 3-5 6 12H2Zm4-8 3 2 3-3M13 13l3 3 3-2"/></svg><strong>Map & terrain</strong><input name="include" type="checkbox" value="osm"></label>
+            </div>
+            <p id="sources-error" class="field-error" role="status" hidden>Choose at least one source.</p>
+          </fieldset>
+          <fieldset id="capture-settings" class="capture-settings">
+            <legend>Settings</legend>
+            <div class="settings-group" data-source="satellite">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg>Satellite</h3>
+              <div class="resolution-heading"><label for="satellite-resolution">Satellite resolution</label><output id="resolution-value" for="satellite-resolution"></output></div>
+              <input id="satellite-resolution" class="resolution-slider" name="satellite_zoom" type="range" min="15" max="21" step="1">
+              <div class="resolution-scale" aria-hidden="true"><span>Low</span><span>High</span></div>
+              <output id="satellite-patches" class="patch-estimate" for="satellite-resolution" aria-live="polite" hidden></output>
+            </div>
+            <div class="settings-group" data-source="streetview">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="4"/></svg>Street View</h3>
+              <div class="settings-grid">
+                <label>Photo spacing (m)<input name="step" type="number" min="1" max="1000" step="any" required></label>
+                <label>Field of view (°)<input name="fov" type="number" min="20" max="120" step="any" required></label>
+              </div>
+            </div>
+          </fieldset>
+          <details id="advanced-settings" class="settings">
+            <summary>Advanced</summary>
+            <div class="settings-group" data-source="streetview">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="4"/></svg>Street View</h3>
+              <div class="settings-grid">
+                <label>Road coverage<select name="depth"><option value="main">Main roads</option><option value="roads">All roads</option><option value="all">Roads + paths</option></select></label>
+                <label>Photo format<select name="image_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
+              </div>
+            </div>
+            <div class="settings-group" data-source="osm">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m2 20 7-14 4 7 3-5 6 12H2Zm4-8 3 2 3-3M13 13l3 3 3-2"/></svg>Map & terrain</h3>
+              <div class="settings-grid"><label>Terrain zoom<input name="terrain_zoom" type="number" min="1" max="14" required></label></div>
+            </div>
+            <div class="settings-group">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 4v16M12 4v16M20 4v16M1 8h6m2 8h6m2-6h6"/></svg>General</h3>
+              <div class="settings-grid"><label>Request delay (s)<input name="delay" type="number" min="0" max="10" step="any" required></label></div>
+            </div>
+          </details>
+        </div>
+        <div class="capture-panel-footer">
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+          <section id="planning-progress" class="planning-progress" aria-label="Planning progress" hidden>
+            <strong id="planning-phase" role="status"></strong>
+            <progress id="planning-meter" aria-labelledby="planning-phase"></progress>
+            <button id="stop-planning" type="button">Stop planning</button>
+          </section>
+          <p id="capture-readiness" class="capture-readiness">Select an area on the map to continue.</p>
+          <button id="start-capture" class="primary wide" type="submit" disabled><span id="start-capture-label">Plan capture</span></button>
+        </div>
+      </form>
+      <section id="plan-recap" class="plan-recap" aria-labelledby="plan-title" hidden>
+        <div class="capture-panel-heading">
+          <button id="edit-plan" class="back-button" type="button"><span aria-hidden="true">←</span> Edit settings</button>
+          <h2 id="plan-title" tabindex="-1">Your capture plan</h2>
+        </div>
+        <div class="capture-panel-body">
+          <div class="plan-time"><span>Estimated download time</span><strong id="plan-duration"></strong></div>
+          <dl id="plan-counts" class="plan-counts"></dl>
+          <p class="plan-note">Based on observed capture speeds plus your request delay. Network speed and retries can change the estimate.</p>
+        </div>
+        <div class="capture-panel-footer">
+          <p id="plan-error" class="form-error" role="alert" hidden></p>
+          <button id="confirm-capture" class="primary wide">Start capture</button>
+          <button id="close-plan" class="wide">Back to library</button>
+        </div>
+      </section>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div class="explorer-heading"><h1 id="capture-title">Captures</h1><p id="capture-subtitle" hidden></p></div>
+      </header>
+      <div class="map-area">
+        <div id="map" aria-label="Interactive capture map"></div>
+        <div id="welcome" class="welcome"><p>Click the button below to capture your area</p><button id="welcome-new" class="primary" disabled>New capture <span aria-hidden="true">↗</span></button></div>
+        <div class="map-tools">
+          <details class="layer-panel" open><summary>Map layers</summary><div class="layer-options">
+            <label><input id="layer-satellite" type="checkbox" checked disabled> Satellite <span class="layer-key satellite-key"></span></label>
+            <label><input id="layer-buildings" type="checkbox" checked disabled> Buildings <span class="layer-key building-key"></span></label>
+            <label><input id="layer-roads" type="checkbox" checked disabled> Roads <span class="layer-key road-key"></span></label>
+            <label><input id="layer-water" type="checkbox" checked disabled> Water & green space <span class="layer-key water-key"></span></label>
+            <label><input id="layer-photos" type="checkbox" checked disabled> Street View <span class="layer-key photo-key"></span></label>
+            <div class="layer-divider"></div>
+            <label><input id="layer-context" type="checkbox" checked> Basemap</label>
+          </div></details>
+          <div class="terrain-panel"><label><input id="terrain" type="checkbox" checked disabled> 3D terrain</label><label id="terrain-scale" hidden>Height <input id="exaggeration" type="range" min="1" max="3" step="0.25" value="1"><output id="height-value">1×</output></label></div>
+        </div>
+        <div id="capture-map-tools" class="capture-map-tools" hidden>
+          <div class="capture-tool-switch" role="group" aria-label="Map interaction">
+            <button id="draw-area" type="button" aria-pressed="true" aria-describedby="draw-instruction"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4M7 3h6M3 7v6m4 4h6m4-10v6"/></svg> Select area</button>
+            <button id="move-map" type="button" aria-pressed="false" aria-describedby="draw-instruction"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2v16M2 10h16M7 5l3-3 3 3M7 15l3 3 3-3M5 7l-3 3 3 3m10-6 3 3-3 3"/></svg> Move map</button>
+          </div>
+          <p id="draw-instruction" role="status">Drag to draw. Scroll to zoom.</p>
+        </div>
+        <div id="draw-measure" class="draw-measure" hidden></div>
+        <div id="map-loading" class="map-loading" hidden>Loading capture…</div>
+        <div id="coordinates" class="coordinates"></div>
+        <section id="photo-drawer" class="photo-drawer" aria-label="Street View photos" hidden>
+          <div class="photo-top"><div><h2 id="photo-title"></h2><p id="photo-meta"></p></div><button id="close-photo" class="quiet" aria-label="Close photos">✕</button></div>
+          <div id="photo-images" class="photo-images"></div>
+          <div class="photo-bottom"><button id="previous-photo">← Previous stop</button><span id="photo-position"></span><button id="next-photo">Next stop →</button></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div id="notice" class="notice" role="status" hidden><span></span><button id="close-notice" aria-label="Dismiss message">✕</button></div>
+  <noscript>This dashboard needs JavaScript to display maps and manage captures.</noscript>
+</body>
+</html>
