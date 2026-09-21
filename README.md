@@ -19,7 +19,7 @@ This was born as a way to let LLMs quickly gather information from the physical 
 
 ## Install
 
-Requires Python 3.11+. Pillow and the Python [osmium](https://osmcode.org/pyosmium/) package are installed automatically with Aleph. No API keys required.
+Requires Python 3.11+. Pillow is the only dependency and is installed automatically with Aleph. OSM processing uses the bundled Python script and standard library. No API keys required.
 
 ```sh
 python3 -m venv .venv
@@ -54,7 +54,13 @@ Here is an overview of the structure of the output dir after a capture:
 - `map.osm`: OpenStreetMap roads, buildings, water, and other features
 - `terrain.tif`: Elevation as a GeoTIFF (original tiles in `terrain/`)
 
-OSM data comes from [Geofabrik](https://download.geofabrik.de/). Aleph downloads the smallest regional file covering your selection, then extracts the selected rectangle locally with Python's `osmium` package. The first download can be hundreds of megabytes even for a small selection. Regional files are reused from `$XDG_CACHE_HOME/aleph/geofabrik` (usually `~/.cache/aleph/geofabrik`); use `--refresh` on CLI requests to download the latest snapshot. Map manifests record the source and snapshot date. Geofabrik omits contributor names, user IDs, and changeset IDs.
+OSM data comes from [Geofabrik](https://download.geofabrik.de/). Aleph downloads the smallest regional file covering your selection, then extracts the selected rectangle locally with its bundled [PBF reader](src/pbf.py). The first download can be hundreds of megabytes even for a small selection. Regional files are reused from `$XDG_CACHE_HOME/aleph/geofabrik` (usually `~/.cache/aleph/geofabrik`); use `--refresh` on CLI requests to download the latest snapshot. Map manifests record the source and snapshot date. Geofabrik omits contributor names, user IDs, and changeset IDs.
+
+The extractor also runs independently, with no third-party packages:
+
+```sh
+python3 src/pbf.py region.osm.pbf 41.88 12.48 41.90 12.51 -o map.osm
+```
 
 ## From the terminal (for scripts and agents)
 

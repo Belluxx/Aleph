@@ -140,8 +140,8 @@ def estimate(run):
     2026-09-19 17:26:41 UTC: 66 Street View photos in 36 s,
     including panorama metadata. 2026-09-19 17:09:18 UTC:
     1,020 satellite tiles in 374 s and 9 terrain tiles in 10 s.
-    2026-09-21: Python Osmium extracted 10 km² from the 384 MB central Italy
-    region in 162 s; allow about 3 minutes per map. Region size affects this cost.
+    2026-09-21: the bundled PBF extractor took 15–24 s for 10–1,000 km² from
+    the 384 MB central Italy region. Region size affects this cost.
     Planning, initial regional downloads and final exports are excluded.
     """
     counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0,
@@ -168,7 +168,7 @@ def estimate(run):
                 + counts["satellite_tiles"] + counts["terrain_tiles"])
     download_seconds = (counts["streetview_photos"] * 0.55
                         + counts["satellite_tiles"] * 0.37
-                        + counts["terrain_tiles"] * 1.1 + counts["osm_maps"] * 180)
+                        + counts["terrain_tiles"] * 1.1 + counts["osm_maps"] * 30)
     delay_seconds = max(0, requests - 1) * run["options"]["delay"]
     return dict(counts, seconds=math.ceil(download_seconds + delay_seconds))
 

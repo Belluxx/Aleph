@@ -1,2 +1,1 @@
 Pillow>=10
-osmium>=4.3,<5

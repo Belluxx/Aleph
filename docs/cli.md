@@ -52,7 +52,7 @@ For example, `--stops 10` requests ten positions along the street. Choose a view
 If Aleph finds several places or street branches, choose from the returned options with `--match ID` or `--route N`, respectively.
 
 > [!TIP]
-> Quick requests start immediately and cache imagery/geocoder responses for 24 hours. OSM roads, nearby POIs, and maps use Geofabrik regional downloads, processed locally with the Python `osmium` dependency. These regional files are retained until explicitly refreshed; the first request may download hundreds of megabytes. Use `--refresh` to fetch fresh responses and regional files, or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
+> Quick requests start immediately and cache imagery/geocoder responses for 24 hours. OSM roads, nearby POIs, and maps use Geofabrik regional downloads, processed locally by Aleph's standard-library PBF reader. These regional files are retained until explicitly refreshed; the first request may download hundreds of megabytes. Use `--refresh` to fetch fresh responses and regional files, or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
 
 ## Capture an area
 

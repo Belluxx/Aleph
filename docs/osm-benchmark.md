@@ -1,16 +1,41 @@
 # OSM provider benchmark — 21 September 2026
 
-Aleph now uses the Python `osmium` dependency for Geofabrik extraction and local road geometry. The native Osmium CLI measurements below describe the earlier implementation, which has been replaced. No Overpass service is used by either Geofabrik implementation.
+Aleph now uses its bundled standard-library [PBF reader](../src/pbf.py) for Geofabrik extraction and local road geometry. The Python `osmium` and native Osmium CLI measurements below describe earlier implementations. None of the Geofabrik implementations uses Overpass.
 
 ## Method
 
-Both selections are centered on the Colosseum in Rome, at 41.8902° N, 12.4922° E. They are squares approximately 3.162 km and 31.623 km wide, with spherical areas of 10.000 and 999.999 km². Tests ran on macOS 15.7.1 ARM64 with Python 3.12.12. The original CLI comparison used Osmium 1.19.1; the current Python implementation uses `osmium` 4.3.1.
+Both selections are centered on the Colosseum in Rome, at 41.8902° N, 12.4922° E. They are squares approximately 3.162 km and 31.623 km wide, with spherical areas of 10.000 and 999.999 km². Tests ran on macOS 15.7.1 ARM64 with Python 3.12.12 and eight available CPUs. The earlier implementations used Osmium CLI 1.19.1 and Python `osmium` 4.3.1.
 
 The baseline is commit `38aa50015fe347a71bcd1c0906376a8a46e3779d`. Its road and map queries, memory budgets, HTTP retries, and three-server fallback were unchanged. Each network operation had an outer 600-second benchmark deadline. A deadline result means no usable response arrived within the test budget, not that the client exhausted every possible retry. Imagery and terrain downloads were excluded.
 
 These are single live trials, so network timings depend on server load. Local files were available in the filesystem cache. Software installation time is excluded.
 
-## Current Python Osmium results
+## Current standard-library extractor
+
+`src/pbf.py` is a standalone script using only Python's standard library. It decodes packed PBF arrays in bulk with standard-library byte operations and integer arithmetic, processes blocks across CPU cores, and decodes strings only when selected objects reference them. XML ways are formatted in workers; selected coordinates and relation records are reused within the operation. No derived files or indexes are cached on disk. It supports the sorted snapshot PBFs used by Geofabrik, including raw/zlib blobs, ordinary/dense nodes, complete ways, parent relations, and recursive POI references. It does not implement Osmium's unrelated commands, history processing, or other optional compression formats.
+
+These exports ran with `python -S`, so no site packages were available, using the same cached 383.6 MB central Italy file:
+
+| Area | Optimized script | Initial script | Python `osmium` | Native CLI | New XML size |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10 km² | 15.08 s | 22.49 s | 161.65 s | 3.39 s | 39.7 MB |
+| 1,000 km² | 23.95 s | 40.54 s | 173.88 s | 3.66 s | 560.7 MB |
+
+The optimized script takes 33% and 41% less time than the initial bundled script, respectively, and is about 10.7× and 7.3× faster than the earlier Python `osmium` implementation. The native CLI remains faster. Timings include parsing the PBF index, selecting objects, completing ways, and writing XML, and exclude downloads and subsequent validation. Capture estimates now allow 30 seconds for map extraction based on this region.
+
+After performance iteration, one final comparison normalized both exports and the native baseline to OPL with the native CLI and compared SHA-256 hashes. Both match, including object IDs, coordinates, tags, metadata, way references and relation members. The matching native baseline has zero missing way nodes. The native CLI was used only as a validation oracle; extraction still runs with no third-party packages. The real 10 km² road query matches all 12,412 ways, and the Colosseum nearby results and Via del Corso's 11 connected ways match as well. A final live cancellation check joined all workers in 0.86 seconds and preserved the previous output. XML sizes differ from the CLI output because formatting differs.
+
+The test suite has 51 passing tests with `osmium` uninstalled. Tests cover bulk integer decoding, both node encodings, UTF-8/XML escaping, metadata, non-default coordinate offsets/granularity, split packed fields, malformed input, nested relations, cancellation, atomic output, and standalone execution without site packages.
+
+To run the script independently:
+
+```sh
+python3 src/pbf.py centro.osm.pbf \
+  41.875980496522295 12.473098695094054 41.904419503477705 12.511301304905947 \
+  -o rome-10.osm
+```
+
+## Earlier Python Osmium results
 
 The Python implementation installs through `pip install .` and uses no external Osmium executable. It reads PBF files directly, preserves complete ways and parent relations, and completes nested POI relations. Roads and nearby places are read directly into Python without intermediate XML files.
 
@@ -21,7 +46,7 @@ Both exports reused the same cached central Italy regional file, with network ac
 | 10 km² | 161.65 s | 41.3 MB |
 | 1,000 km² | 173.88 s | 571.4 MB |
 
-These single-trial timings exclude downloading the regional file and subsequent validation. Python scans the entire regional file to select the rectangle, so the regional file's size matters even for small selections. Capture estimates now allow about three minutes for local map extraction, based on this region.
+These single-trial timings exclude downloading the regional file and subsequent validation. This implementation scanned the entire regional file through Python OSM objects to select the rectangle, so the regional file's size mattered even for small selections.
 
 Both exports have identical node, way, and relation IDs to the earlier CLI exports, and both pass way-reference validation through Python Osmium. The 10 km² export's 12,412 highway ways match the earlier road geometry exactly. Nearby results around the Colosseum and Via del Corso's 11 connected ways also matched when read from the new export. All 44 tests pass with the native tool absent from `PATH`, including cancellation, nested relations, offline reuse, and preserving previous files on failure.
 

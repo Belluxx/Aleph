@@ -6,8 +6,6 @@ import unittest
 from unittest.mock import Mock, patch
 from xml.etree import ElementTree as ET
 
-import osmium
-
 from src.common import Client
 from src.osm import Source, covers
 
@@ -39,27 +37,7 @@ class ExtractTests(unittest.TestCase):
         index = dict(features=[dict(type="Feature", properties=dict(name="Test region", urls=dict(pbf=url)),
                                    geometry=polygon([[-2, -2], [2, -2], [2, 2], [-2, 2], [-2, -2]]))])
         (self.source.directory / "index.json").write_text(json.dumps(index))
-        xml = self.folder / "fixture.osm"
-        xml.write_text('''<osm version="0.6">
-          <node id="1" lat="0" lon="0"><tag k="amenity" v="cafe"/></node>
-          <node id="2" lat="0" lon="0.001"/>
-          <node id="3" lat="0" lon="0.002"/>
-          <node id="4" lat="0.01" lon="0.01"/>
-          <node id="5" lat="0.01" lon="0.011"/>
-          <node id="6" lat="0" lon="-0.003"/>
-          <way id="10"><nd ref="1"/><nd ref="2"/><tag k="highway" v="residential"/><tag k="name" v="Main Street"/></way>
-          <way id="11"><nd ref="2"/><nd ref="3"/><tag k="highway" v="residential"/><tag k="name" v="Main Street"/></way>
-          <way id="12"><nd ref="4"/><nd ref="5"/><tag k="highway" v="residential"/><tag k="name" v="Main Street"/></way>
-          <way id="13"><nd ref="1"/><nd ref="6"/></way>
-          <relation id="19"><member type="relation" ref="20" role=""/>
-            <tag k="tourism" v="attraction"/><tag k="name" v="Museum complex"/></relation>
-          <relation id="20"><member type="way" ref="10" role=""/><member type="way" ref="11" role=""/>
-            <tag k="tourism" v="attraction"/><tag k="name" v="Museum"/></relation>
-        </osm>''')
-        header = osmium.io.Header()
-        header.set("osmosis_replication_timestamp", "2026-09-20T20:00:00Z")
-        with osmium.SimpleWriter(self.path, header=header) as writer:
-            osmium.apply(xml, writer)
+        self.path.write_bytes((Path(__file__).parent / "data" / "dense.osm.pbf").read_bytes())
         self.area = (-.0001, -.0001, .0001, .0005)
 
     def test_export_completes_ways_and_preserves_partial_relation_members(self):
@@ -105,7 +83,7 @@ class ExtractTests(unittest.TestCase):
             Path(kwargs["destination"]).write_bytes(b"not a PBF")
 
         self.client.get.side_effect = download
-        with self.assertRaises(OSError):
+        with self.assertRaises(ValueError):
             self.source.region(self.area, lambda *args: None)
         self.assertEqual(self.path.read_bytes(), original)
 
