@@ -10,7 +10,29 @@ The baseline is commit `38aa50015fe347a71bcd1c0906376a8a46e3779d`. Its road and 
 
 These are single live trials, so network timings depend on server load. Local files were available in the filesystem cache. Software installation time is excluded.
 
-## Current standard-library extractor
+## Current extractor with multipolygon completion
+
+Map exports now complete multipolygons selected by the capture rectangle, including outer boundaries and holes. This runs in the bundled standard-library script, with no Osmium dependency or persistent derived cache. The first way scan records each block's ID range; completion reads only blocks containing missing member ways and merges their XML into the existing sorted output. Node coordinates and relation records continue to be reused within the operation. Other relation types retain their existing partial-reference behavior.
+
+A fresh paired run measured the previous complete-way exporter and the new exporter consecutively, using the same cached central Italy PBF and `python -S`:
+
+| Area | Before: complete ways | Now: complete multipolygons | Additional XML |
+| --- | ---: | ---: | ---: |
+| 10 km² | 16.69 s | 16.86 s | 0.16 MB |
+| 1,000 km² | 29.51 s | 28.29 s | 0.80 MB |
+
+These single-trial total-time differences are within observed run-to-run variation. A separate 1,000 km² profile measured 0.254 seconds for the missing-way lookup and merge, revisiting 61 of 676 way blocks. Total export times include node completion and XML output; downloads and validation are excluded. The existing 30-second map estimate remains appropriate for this region.
+
+After performance iteration, one final integrity pass compared SHA-256 hashes of canonical OPL from both exports against fresh native Osmium `smart` extracts. Both match in all objects, metadata, tags, coordinates, way references and relation members. The native tool is used only as a validation oracle. The exports contain:
+
+| Area | Nodes | Ways | Relations |
+| --- | ---: | ---: | ---: |
+| 10 km² | 178,481 | 32,912 | 3,219 |
+| 1,000 km² | 3,178,420 | 469,640 | 21,004 |
+
+All 53 tests pass. The added fixtures verify a split outer boundary and courtyard through the map viewer, sorted output without duplicate ways, preserving the existing scope of road selection and unrelated relations, and preserving the previous output when a required member way is missing from the source.
+
+## Earlier standard-library extractor (complete ways)
 
 `src/pbf.py` is a standalone script using only Python's standard library. It decodes packed PBF arrays in bulk with standard-library byte operations and integer arithmetic, processes blocks across CPU cores, and decodes strings only when selected objects reference them. XML ways are formatted in workers; selected coordinates and relation records are reused within the operation. No derived files or indexes are cached on disk. It supports the sorted snapshot PBFs used by Geofabrik, including raw/zlib blobs, ordinary/dense nodes, complete ways, parent relations, and recursive POI references. It does not implement Osmium's unrelated commands, history processing, or other optional compression formats.
 

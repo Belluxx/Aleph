@@ -56,6 +56,8 @@ Here is an overview of the structure of the output dir after a capture:
 
 OSM data comes from [Geofabrik](https://download.geofabrik.de/). Aleph downloads the smallest regional file covering your selection, then extracts the selected rectangle locally with its bundled [PBF reader](src/pbf.py). The first download can be hundreds of megabytes even for a small selection. Regional files are reused from `$XDG_CACHE_HOME/aleph/geofabrik` (usually `~/.cache/aleph/geofabrik`); use `--refresh` on CLI requests to download the latest snapshot. Map manifests record the source and snapshot date. Geofabrik omits contributor names, user IDs, and changeset IDs.
 
+Map exports include complete ways and complete multipolygons selected by the rectangle, preserving building courtyards, lake islands, and boundaries assembled from several ways. Their geometry can extend beyond the selection. Other relations retain their original references and may remain incomplete.
+
 The extractor also runs independently, with no third-party packages:
 
 ```sh

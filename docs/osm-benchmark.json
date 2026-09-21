@@ -389,5 +389,70 @@
     "cancellation_seconds": 0.86,
     "validation_method": "One final SHA-256 comparison of canonical OPL output against the native baseline, after performance iteration.",
     "validation_seconds": 23.16
+  },
+  "stdlib_pbf_multipolygons": {
+    "python_site_packages_enabled": false,
+    "workers": 8,
+    "regional_file_cached": true,
+    "network_requests": 0,
+    "tests_passed": 53,
+    "results": [
+      {
+        "area_km2": 10,
+        "bounds": [
+          41.875980496522295,
+          12.473098695094054,
+          41.904419503477705,
+          12.511301304905947
+        ],
+        "previous_complete_ways": {
+          "map_seconds": 16.69,
+          "map_bytes": 39695725,
+          "osm_data_at": "2026-09-20T20:22:06Z"
+        },
+        "map_seconds": 16.86,
+        "map_bytes": 39855706,
+        "osm_data_at": "2026-09-20T20:22:06Z",
+        "normalized_opl_sha256": "877cbe1724432fc538fc309a0982be75577dddfe65c08b66c96408d9a29493e9",
+        "counts": {
+          "node": 178481,
+          "way": 32912,
+          "relation": 3219
+        },
+        "matches_native_smart": true
+      },
+      {
+        "area_km2": 1000,
+        "bounds": [
+          41.74800496522297,
+          12.301186950940533,
+          42.03239503477703,
+          12.683213049059468
+        ],
+        "previous_complete_ways": {
+          "map_seconds": 29.51,
+          "map_bytes": 560701743,
+          "osm_data_at": "2026-09-20T20:22:06Z"
+        },
+        "map_seconds": 28.29,
+        "map_bytes": 561502181,
+        "osm_data_at": "2026-09-20T20:22:06Z",
+        "normalized_opl_sha256": "d68c36c8f80c1b4802ff017380f01769adea211ffd583eb380cef2410c15c532",
+        "counts": {
+          "node": 3178420,
+          "way": 469640,
+          "relation": 21004
+        },
+        "matches_native_smart": true
+      }
+    ],
+    "validation_method": "One final SHA-256 comparison of canonical OPL against native Osmium smart extracts.",
+    "validation_seconds": 30.46,
+    "completion_profile": {
+      "area_km2": 1000,
+      "total_way_blocks": 676,
+      "revisited_way_blocks": 61,
+      "way_completion_seconds": 0.254
+    }
   }
 }

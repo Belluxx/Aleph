@@ -10,6 +10,7 @@ import zlib
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from src.dashboard_osm import display_osm
 from src.pbf import PBF, unpack
 
 
@@ -37,10 +38,41 @@ def blob(kind, payload, compressed=False):
     return struct.pack(">I", len(header)) + header + data
 
 
-def snapshot(group, *, options=b"", features=(b"OsmSchema-V0.6", b"DenseNodes")):
+def snapshot(group, *, options=b"", features=(b"OsmSchema-V0.6", b"DenseNodes"), strings=(b"",)):
     header = b"".join(field(4, feature) for feature in features)
-    data = field(1, field(1, b"")) + field(2, group) + options
+    data = field(1, b"".join(field(1, value) for value in strings)) + field(2, group) + options
     return blob(b"OSMHeader", header) + blob(b"OSMData", data, True)
+
+
+def multipolygon_snapshot(missing_way=False):
+    strings = (b"", b"type", b"multipolygon", b"building", b"yes", b"outer", b"inner", b"label", b"route")
+    coordinates = [(-10000, -10000), (-10000, 10000), (10000, 10000), (10000, -10000),
+                   (-5000, -5000), (-5000, 5000), (5000, 5000), (5000, -5000),
+                   (100000, 100000), (100000, 110000), (20000, 20000)]
+    nodes = b"".join(field(1, field(1, identity * 2) + field(8, (lat << 1) ^ (lat >> 63))
+                           + field(9, (lon << 1) ^ (lon >> 63)))
+                     for identity, (lat, lon) in enumerate(coordinates, 1))
+    result = snapshot(nodes, strings=strings)
+    table = field(1, b"".join(field(1, value) for value in strings))
+
+    def deltas(refs):
+        return packed([refs[0], *(b - a for a, b in zip(refs, refs[1:]))], True)
+
+    for ways in ([(10, [1, 2]), (15, [5, 6, 7, 8, 5]), (20, [2, 3, 4])],
+                 [(30, [4, 1])], [(40, [9, 10]), (50, [9, 10])]):
+        group = b"".join(field(3, field(1, identity) + field(8, deltas(refs)))
+                         for identity, refs in ways if not (missing_way and identity == 20))
+        result += blob(b"OSMData", table + field(2, group), True)
+    relations = b""
+    # Only 100 directly intersects the capture and needs polygon completion.
+    for identity, keys, vals, refs, roles, kinds in (
+        (100, [1, 3], [2, 4], [10, 20, 30, 15, 11], [5, 5, 5, 6, 7], [1, 1, 1, 1, 0]),
+        (101, [1], [8], [10, 40], [0, 0], [1, 1]),
+        (102, [1], [2], [100, 50], [0, 5], [2, 1]),
+    ):
+        relations += field(4, field(1, identity) + field(2, packed(keys)) + field(3, packed(vals))
+                           + field(8, packed(roles)) + field(9, deltas(refs)) + field(10, packed(kinds)))
+    return result + blob(b"OSMData", table + field(2, relations), True)
 
 
 class PBFTests(unittest.TestCase):
@@ -114,6 +146,29 @@ class PBFTests(unittest.TestCase):
             PBF(self.path).export(self.area, self.output)
         self.assertEqual(self.output.read_bytes(), b"previous")
         self.assertEqual(list(self.folder.glob(".map.osm-*")), [])
+
+    def test_map_completes_multipolygon_outer_and_hole_without_expanding_other_relations(self):
+        self.path.write_bytes(multipolygon_snapshot())
+        area = (-.0011, -.0011, -.0009, -.0009)
+        source = PBF(self.path)
+        self.assertEqual(source.select(area)[1], {10, 30})
+        source.export(area, self.output)
+        root = ET.parse(self.output).getroot()
+        self.assertEqual([int(w.attrib["id"]) for w in root.findall("way")], [10, 15, 20, 30])
+        self.assertEqual({int(n.attrib["id"]) for n in root.findall("node")}, {*range(1, 9), 11})
+        self.assertEqual([int(r.attrib["id"]) for r in root.findall("relation")], [100, 101, 102])
+        features = display_osm(self.output)["features"]
+        self.assertEqual(len(features), 1)
+        geometry = features[0]["geometry"]
+        self.assertEqual(geometry["type"], "MultiPolygon")
+        self.assertEqual(len(geometry["coordinates"][0]), 2)  # Closed outer and courtyard.
+
+    def test_missing_multipolygon_way_preserves_previous_output(self):
+        self.path.write_bytes(multipolygon_snapshot(missing_way=True))
+        self.output.write_bytes(b"previous")
+        with self.assertRaisesRegex(ValueError, "missing multipolygon member ways"):
+            PBF(self.path).export((-.0011, -.0011, -.0009, -.0009), self.output)
+        self.assertEqual(self.output.read_bytes(), b"previous")
 
     def test_standalone_script_runs_without_site_packages(self):
         source = Path(__file__).parent / "data" / "dense.osm.pbf"

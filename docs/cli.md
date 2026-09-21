@@ -64,6 +64,6 @@ alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --no-plan -o capt
 
 `--bbox` takes two opposite corners: `lat1 lon1 lat2 lon2`. All sources are included; use `--sources satellite osm` to download only satellite imagery, map data, and terrain.
 
-`capture create` and `capture resume` also accept `--cache-dir PATH` and `--refresh`. Geofabrik publishes daily snapshots; repeated captures reuse the regional file until you refresh it. Estimates do not include the first regional download. Map exports retain complete local ways and original relation references; distant relation members may be absent. Named-street routes are joined using OSM node IDs, and nearby ways/relations are represented by their bounding-box centers.
+`capture create` and `capture resume` also accept `--cache-dir PATH` and `--refresh`. Geofabrik publishes daily snapshots; repeated captures reuse the regional file until you refresh it. Estimates do not include the first regional download. Map exports complete selected ways and multipolygons, including outer boundaries and holes that extend beyond the selection. Other relations retain their original references and may remain incomplete. Named-street routes are joined using OSM node IDs, and nearby ways/relations are represented by their bounding-box centers.
 
 `--no-plan` starts downloading without confirmation (not recommended, as it may take a lot of time). Omit it to review the estimate first, or use `--plan` to save a plan without downloading. See `alephgeo capture create --help` for resolution and spacing options.

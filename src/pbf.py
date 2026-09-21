@@ -333,15 +333,24 @@ def references(data):
 
 
 def scan_ways(task):
-    path, entry, xml = task
+    """Select spatial ways or requested member IDs and record the block's ID range."""
+    path, entry, xml, wanted = task
     values, groups = block(path, entry)
     selected, identities, nodes = [], array("q"), set()
+    first = last = None
     strings = None
     for group in groups:
         for kind, message in fields(group):
             if kind == 3:
+                if first is None:
+                    first = message
+                last = message
+                if wanted is not None:
+                    identity = varint(message, 1)[0] if message[:1] == b"\x08" else columns(message)[1]
+                    if identity not in wanted:
+                        continue
                 packed = way_references(message)
-                if not _SPATIAL.isdisjoint(references(packed)):
+                if wanted is not None or not _SPATIAL.isdisjoint(references(packed)):
                     row = columns(message)
                     refs = list(references(packed))
                     if strings is None:
@@ -354,7 +363,9 @@ def scan_ways(task):
                         selected.append(xml_object(item))
                     else:
                         selected.append(item)
-    return (identities, array("q", nodes), "".join(selected).encode()) if xml else selected
+    bounds = tuple(varint(m, 1)[0] if m[:1] == b"\x08" else columns(m)[1] for m in (first, last))
+    result = (identities, array("q", nodes), "".join(selected).encode()) if xml else selected
+    return bounds, result
 
 
 class StringTable:
@@ -644,7 +655,7 @@ class PBF:
                        attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
 
     def select(self, area, xml=False):
-        self.way_xml = []
+        self.way_xml = {}
         self.selected_coordinates.clear()
         spatial, nodes, ways, relations = set(), set(), set(), set()
         tasks = ((self.path, entry, area, xml) for entry in self.entries)
@@ -659,35 +670,69 @@ class PBF:
             if coordinates is not None and selected:
                 self.selected_coordinates[entry[0]] = selected, coordinates
         nodes.update(spatial)
-        tasks = ((self.path, entry, xml) for entry in self.entries if entry[2] & 8)
-        for selected in self.parallel(scan_ways, tasks, spatial_nodes, (array("q", spatial),)):
+        entries = [entry for entry in self.entries if entry[2] & 8]
+        tasks = ((self.path, entry, xml, None) for entry in entries)
+        way_blocks = []
+        results = self.parallel(scan_ways, tasks, spatial_nodes, (array("q", spatial),))
+        for entry, (bounds, selected) in zip(entries, results):
             if xml:
                 identities, refs, chunk = selected
                 ways.update(identities)
                 nodes.update(refs)
-                self.way_xml.append(chunk)
+                self.way_xml[entry[0]] = identities, chunk
+                way_blocks.append((entry, bounds))
                 continue
             for way in selected:
                 ways.add(way["id"])
                 nodes.update(way["nodes"])
                 self.selected_ways[way["id"]] = way
         parents, pending = defaultdict(list), []
-        rows = {}
+        rows, extra_ways = {}, set()
         for _, row, strings, date_gran in self.raw((4,)):
             identity = row[1]
             rows[identity] = row, strings, date_gran
-            refs = accumulate(unpack(row.get(9, b""), True))
-            for kind, ref in zip(unpack(row.get(10, b"")), refs):
+            refs = list(accumulate(unpack(row.get(9, b""), True)))
+            kinds = unpack(row.get(10, b""))
+            matched = False
+            for kind, ref in zip(kinds, refs):
                 if kind == 2:
                     parents[ref].append(identity)
                 elif ref in (spatial if kind == 0 else ways):
-                    pending.append(identity)
+                    matched = True
+            if matched:
+                pending.append(identity)
+                if xml and tags(row, strings).get("type") == "multipolygon":
+                    for kind, ref in zip(kinds, refs):
+                        if kind == 0:
+                            nodes.add(ref)
+                        elif kind == 1:
+                            extra_ways.add(ref)
         while pending:
             identity = pending.pop()
             if identity not in relations:
                 relations.add(identity)
                 pending.extend(parents[identity])
         self.selected_relations = {i: rows[i] for i in relations}
+        if xml:
+            # Revisit only blocks containing missing polygon members. Keep the
+            # existing XML and merge added ways in ID order without duplicates.
+            missing = sorted(extra_ways - ways)
+            tasks, entries = [], []
+            for entry, (first, last) in way_blocks:
+                wanted = missing[bisect.bisect_left(missing, first):bisect.bisect_right(missing, last)]
+                if wanted:
+                    entries.append(entry)
+                    tasks.append((self.path, entry, True, set(wanted)))
+            if tasks:
+                for entry, (_, (identities, refs, chunk)) in zip(entries, self.parallel(scan_ways, tasks)):
+                    nodes.update(refs)
+                    ways.update(identities)
+                    previous, original = self.way_xml[entry[0]]
+                    merged = sorted(chain(zip(previous, original.splitlines(keepends=True)),
+                                          zip(identities, chunk.splitlines(keepends=True))))
+                    self.way_xml[entry[0]] = (), b"".join(part for _, part in merged)
+            if not extra_ways <= ways:
+                raise ValueError("PBF source is missing multipolygon member ways.")
         return nodes, ways, relations
 
     def nodes(self, wanted, mode="points"):
@@ -785,7 +830,7 @@ class PBF:
                     written += chunk.count(b"<node ")
                 if written != len(selected[0]):
                     raise ValueError("PBF extract contains incomplete way geometry.")
-                for chunk in self.way_xml:
+                for _, chunk in self.way_xml.values():
                     stream.write(chunk)
                 for item in self.relations(selected[2]):
                     stream.write(xml_object(item).encode("utf-8"))
