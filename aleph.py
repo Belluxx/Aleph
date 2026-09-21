@@ -114,8 +114,8 @@ def parser():
     area.set_defaults(**capture.DEFAULT_OPTIONS)
     dashboard = commands.add_parser("dashboard", help="Open the local capture dashboard")
     dashboard.add_argument("--root", type=Path, default=Path("."), help="capture directory (default: current directory)")
-    dashboard.add_argument("--port", type=int, metavar="PORT", default=0,
-                           help="local port (default: choose an available port)")
+    dashboard.add_argument("--port", type=int, metavar="PORT", default=8100,
+                           help="local port (default: 8100)")
     dashboard.add_argument("--no-browser", action="store_true", help="print the URL without opening a browser")
     for name, help_text in (
         ("resume", "Continue a saved or planned run"),
@@ -249,8 +249,8 @@ def main(argv=None):
             return 0
         args = command.parse_args(argv)
         if args.command == "dashboard":
-            if not 0 <= args.port <= 65535:
-                command.error("--port must be from 0 to 65535")
+            if not 1 <= args.port <= 65535:
+                command.error("--port must be from 1 to 65535")
             from src.dashboard import serve
 
             serve(args.root, args.port, open_browser=not args.no_browser)

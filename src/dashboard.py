@@ -388,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
     do_POST = dispatch
 
 
-def serve(root, port=0, *, open_browser=True):
+def serve(root, port=8100, *, open_browser=True):
     root = Path(root).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="aleph-dashboard-") as cache:

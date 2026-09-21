@@ -23,6 +23,11 @@ Requires Python 3.11+. Pillow is the only dependency. No API keys required.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install .
+```
+
+Then test with
+
+```sh
 alephgeo --help
 ```
 
@@ -36,7 +41,7 @@ If you prefer using Aleph from the CLI or want to let an agent interface with di
 alephgeo dashboard --root captures
 ```
 
-The dashboard opens in your browser. Your captures will be saved in `captures`.
+The dashboard opens in your browser at `http://127.0.0.1:8100`. Your captures will be saved in `captures`.
 
 ## Inside the folder
 
