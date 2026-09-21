@@ -4,7 +4,7 @@
 const $ = (id) => document.getElementById(id);
 const empty = () => ({type: "FeatureCollection", features: []});
 const state = {config: null, captures: [], selected: null, map: null, ready: null,
-  selection: 0, photos: [], photoCount: 0, photoGroups: new Map(), photoIndex: 0, job: null, dismissedJob: null,
+  selection: 0, photos: [], photoCount: 0, photoGroups: new Map(), photoIndex: 0, job: null,
   composing: false, drawing: false, drag: null, draftBounds: null, submitting: false,
   pendingPlan: null, plan: null,
   previousView: null, rotating: null, terrainFocus: null, refreshing: false, lastRefresh: 0, popup: null};
@@ -956,7 +956,6 @@ async function planCapture(event) {
   try {
     const job = await api("/api/plans", {bounds, options});
     state.pendingPlan = job.plan_id;
-    state.dismissedJob = null;
     renderJob(job);
   } catch (error) {
     $("form-error").textContent = error.message;
@@ -1027,7 +1026,6 @@ async function confirmCapture() {
   try {
     const job = await api(plan.id ? runURL(plan.id, "/resume") : "/api/captures",
       plan.id ? {} : {plan_id: plan.plan_id});
-    state.dismissedJob = null;
     renderJob(job);
     state.submitting = false;
     closeCapture(false);
@@ -1044,16 +1042,12 @@ async function confirmCapture() {
   }
 }
 
-function jobKey(job) {
-  return `${job.run_id}|${job.state}|${job.phase}`;
-}
-
 function renderJob(job) {
   const previous = state.job;
   state.job = job;
   const panel = $("job");
   const wasHidden = panel.hidden;
-  panel.hidden = job.kind === "plan" || job.state === "idle" || state.dismissedJob === jobKey(job);
+  panel.hidden = job.kind === "plan" || job.state === "idle";
   // Only announce changed phase text, not every polling response.
   const phase = job.phase;
   if ($("job-phase").textContent !== phase) $("job-phase").textContent = phase;
@@ -1073,7 +1067,6 @@ function renderJob(job) {
   const stopLabel = job.state === "stopping" ? "Stopping capture…" : "Stop capture";
   $("stop-job").setAttribute("aria-label", stopLabel);
   $("stop-job").title = stopLabel;
-  $("dismiss-job").hidden = job.active;
   $("view-job").hidden = !job.run_id || state.captures.some((run) => run.id === job.run_id);
   $("job-error").hidden = !job.error;
   $("job-error").title = job.error || "";
@@ -1114,7 +1107,6 @@ async function poll() {
 async function runAction(identity, action) {
   if (state.job?.active) return;
   try {
-    state.dismissedJob = null;
     renderJob(await api(runURL(identity, "/" + action), {}));
     if (state.selected?.id !== identity) await selectCapture(identity);
   } catch (error) { notice(error.message); }
@@ -1161,7 +1153,6 @@ function bindEvents() {
     if (state.job?.run_id) selectCapture(state.job.run_id).catch((error) => notice(error.message));
   });
   $("job-error").addEventListener("click", () => notice(state.job.error));
-  $("dismiss-job").addEventListener("click", () => {state.dismissedJob = jobKey(state.job); renderJob(state.job);});
   document.addEventListener("click", (event) => {
     for (const menu of document.querySelectorAll(".card-more[open]")) {
       if (!menu.contains(event.target)) menu.open = false;
