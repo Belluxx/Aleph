@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from src import capture, places, quick
-from src.common import CachedClient, Client, Progress, RequestError, now
+from src.common import DEFAULT_CACHE, CachedClient, Client, Progress, RequestError, now
 from src.geo import MERCATOR_RADIUS, bounds
 
 
@@ -37,13 +37,15 @@ def parser():
     def json_output(command):
         command.add_argument("--json", action="store_true", help="one JSON result on stdout; progress on stderr")
 
+    def cache_options(command):
+        command.add_argument("--cache-dir", type=Path,
+                             default=DEFAULT_CACHE, help="data cache directory (default: %(default)s)")
+        command.add_argument("--refresh", action="store_true", help="refresh responses and Geofabrik regional files")
+
     def network(command):
         command.add_argument("--geocoder", default=os.environ.get("ALEPH_GEOCODER_URL", places.GEOCODER),
                              metavar="URL", help="Photon server URL (or ALEPH_GEOCODER_URL)")
-        command.add_argument("--cache-dir", type=Path,
-                             default=Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "aleph",
-                             help="response cache directory (default: %(default)s)")
-        command.add_argument("--refresh", action="store_true", help="fetch fresh responses instead of cached responses")
+        cache_options(command)
         json_output(command)
 
     def locations(command):
@@ -99,6 +101,7 @@ def parser():
     area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES,
                       help="sources to download (default: all; osm includes terrain)")
     output(area)
+    cache_options(area)
     json_output(area)
     area.add_argument("--delay", type=float, help="pause between requests in seconds")
     planning = area.add_mutually_exclusive_group()
@@ -127,6 +130,7 @@ def parser():
         )
         if name == "resume":
             command.add_argument("--no-plan", action="store_true", help=no_plan_help)
+            cache_options(command)
         json_output(command)
     return root
 
@@ -189,7 +193,8 @@ def query(args, progress):
         if args.streets and args.query is None:
             raise ValueError("--streets requires a place name.")
         if args.nearby:
-            results = places.nearby(client, args.at, radius=100 if args.radius is None else args.radius, limit=args.limit)
+            results = places.nearby(client, args.at, radius=100 if args.radius is None else args.radius,
+                                    limit=args.limit, progress=progress)
             mode = "nearby"
         else:
             results = places.geocode(client, query=args.query, at=args.at, limit=args.limit if args.query is not None else 1,
@@ -266,11 +271,12 @@ def main(argv=None):
         if action in ("resume", "export"):
             folder = args.folder.expanduser().resolve()
             run = capture.load(folder)
-            client = Client(run["options"]["delay"])
+            client = Client(run["options"]["delay"], cache_dir=getattr(args, "cache_dir", DEFAULT_CACHE),
+                            refresh=getattr(args, "refresh", False))
         else:
             area = bounds(args.bbox)
             options = {key: getattr(args, key) for key in capture.DEFAULT_OPTIONS}
-            client = Client(args.delay)
+            client = Client(args.delay, cache_dir=args.cache_dir, refresh=args.refresh)
             with Progress() as progress:
                 run = capture.plan(client, area, options, progress)
         save_only = action == "create" and args.plan

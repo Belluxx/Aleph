@@ -36,7 +36,7 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.progress = Mock()
         self.client = Mock(spec=Client)
         self.client.get.side_effect = AssertionError("Unexpected image download")
-        self.client.overpass.side_effect = AssertionError("Unexpected OSM download")
+        self.client.maps.export.side_effect = AssertionError("Unexpected OSM download")
 
     def test_spacing_and_delay_require_valid_numbers_without_workload_caps(self):
         for step in (0.5, 2000):
@@ -207,8 +207,8 @@ class CaptureRecoveryTests(unittest.TestCase):
     def test_osm_failure_still_saves_terrain_and_resume_fetches_only_map(self):
         run = capture.plan(self.client, [1, 1, 2, 2],
                            dict(include=["osm"], terrain_zoom=1), self.progress)
-        failure = OSError("Overpass unavailable")
-        self.client.overpass.side_effect = failure
+        failure = OSError("Geofabrik unavailable")
+        self.client.maps.export.side_effect = failure
         self.client.get.side_effect = [terrain_bytes(1, 0, 1)]
         with self.assertRaises(OSError) as raised:
             capture.download(run, self.folder, self.client, self.progress)
@@ -221,7 +221,11 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.assertFalse((self.folder / "map.osm").exists())
 
         osm = b'<osm version="0.6"><node id="1" lat="1" lon="1"/><way id="2"><nd ref="1"/></way></osm>'
-        self.client.overpass.side_effect = [osm]
+        def export(area, path, progress):
+            path.write_bytes(osm)
+            return dict(source_url="https://download.geofabrik.de/test.osm.pbf", osm_data_at="2026-09-20T20:00:00Z")
+
+        self.client.maps.export.side_effect = export
         self.client.get.reset_mock()
         self.client.get.side_effect = AssertionError("Completed terrain must not be downloaded again")
         capture.download(saved, self.folder, self.client, self.progress)
@@ -231,14 +235,3 @@ class CaptureRecoveryTests(unittest.TestCase):
         completed = capture.load(self.folder)
         self.assertEqual(completed["state"], "complete")
         self.assertEqual(len(completed["stages"][0]["results"]), 2)
-
-    def test_osm_rejects_incomplete_ways_but_allows_distant_relation_members(self):
-        invalid = (
-            b'<osm><remark>runtime error: timeout</remark></osm>',
-            b'<osm><way id="1"><nd ref="99"/></way></osm>',
-            b'<osm><node id="1" lat="0" lon="0"/><node id="1" lat="0" lon="0"/></osm>',
-        )
-        for data in invalid:
-            with self.subTest(data=data), self.assertRaises(ValueError):
-                capture.validate_osm(data)
-        capture.validate_osm(b'<osm><relation id="1"><member type="way" ref="99" role="outer"/></relation></osm>')

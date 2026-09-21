@@ -6,9 +6,9 @@ from urllib.parse import urlsplit
 
 from .common import RequestError, url
 from .geo import RADIUS, bounds, distance
+from .osm import POI_KEYS
 
 GEOCODER = "https://photon.komoot.io"
-POI_KEYS = ("amenity", "tourism", "shop", "leisure", "historic", "office")
 
 
 def number(value, name, low, high):
@@ -41,16 +41,6 @@ def around(center, size):
     if lon - dx < -180 or lon + dx > 180:
         raise ValueError("Split areas crossing the date line into two rectangles.")
     return bounds((lat - dy, lon - dx, lat + dy, lon + dx), minimum=0)
-
-
-def osm_data(client, query):
-    try:
-        data = json.loads(client.overpass(query))
-    except (OSError, ValueError) as error:
-        raise RequestError("provider_unavailable", f"Overpass request failed: {error}") from error
-    if data.get("remark") or not isinstance(data.get("elements"), list):
-        raise RequestError("provider_unavailable", "Overpass returned incomplete data; retry later.")
-    return data
 
 
 def geocode(client, *, query=None, at=None, limit=5, street=False, endpoint=GEOCODER):
@@ -112,27 +102,29 @@ def choose(client, query, *, match=None, street=False, endpoint=GEOCODER):
     raise RequestError("ambiguous_place", "Choose a returned place with --match TYPE/ID.", candidates=candidates)
 
 
-def nearby(client, at, *, radius=100, limit=10):
+def nearby(client, at, *, radius=100, limit=10, progress=lambda *args: None):
     lat, lon = point(at)
     number(radius, "radius", 1, 5000)
     number(limit, "limit", 1, 50)
-    selection = "".join(f'nwr(around:{radius},{lat},{lon})["{key}"];' for key in POI_KEYS)
-    data = osm_data(client, f"[out:json][timeout:25];({selection});out center tags;")
+    items, metadata = client.maps.data(around((lat, lon), radius * 2), poi=True, progress=progress)
     results = []
-    for item in data["elements"]:
-        tags = item.get("tags", {})
-        center = item if item["type"] == "node" else item.get("center")
-        if not center:
+    for item in items:
+        tags = item["tags"]
+        if not any(key in tags for key in POI_KEYS):
             continue
-        separation = distance(at, point((center["lat"], center["lon"])))
+        center = item.get("center")
+        if center is None:
+            continue
+        separation = distance(at, center)
         # Ways/relations are represented by their bounding-box center, not an entrance.
         if separation > radius:
             continue
         identity = f"{item['type']}/{item['id']}"
         categories = [f"{key}:{tags[key]}" for key in POI_KEYS if key in tags]
         results.append(dict(id=identity, name=tags.get("name"), categories=categories,
-                            lat=center["lat"], lon=center["lon"], distance_m=round(separation, 2),
+                            lat=center[0], lon=center[1], distance_m=round(separation, 2),
                             location_type="point" if item["type"] == "node" else "bbox_center",
-                            source="OpenStreetMap", source_url=f"https://www.openstreetmap.org/{identity}"))
+                            source="OpenStreetMap", source_url=f"https://www.openstreetmap.org/{identity}",
+                            osm_data_at=metadata["osm_data_at"]))
     results.sort(key=lambda item: (item["distance_m"], item["id"]))
     return results[:limit]

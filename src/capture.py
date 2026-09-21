@@ -9,13 +9,11 @@ import zlib
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from xml.etree import ElementTree as ET
 
 from PIL import Image
 
 from . import streetview, terrain
 from .common import (
-    OVERPASS,
     MissingImagery,
     atomic_path,
     contained,
@@ -44,7 +42,7 @@ DEFAULT_OPTIONS = dict(
 )
 
 OSM_NOTES = {
-    "map": "Native OSM XML with original tags, metadata and topology; coordinates are WGS84.",
+    "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
     "selection": "Bounding-box selection with complete ways. Relations retain their original member references, but members outside the extract are not downloaded recursively. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
     "terrain": "Float32 heights in meters, EPSG:3857. Original compressed blocks retained without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
@@ -141,9 +139,10 @@ def estimate(run):
 
     2026-09-19 17:26:41 UTC: 66 Street View photos in 36 s,
     including panorama metadata. 2026-09-19 17:09:18 UTC:
-    1,020 satellite tiles in 374 s, then 22 s for OSM and 9 terrain tiles
-    in 10 s. Rounded per-item rates retain this baseline without requiring
-    the original capture folders. Planning and final exports are excluded.
+    1,020 satellite tiles in 374 s and 9 terrain tiles in 10 s.
+    2026-09-21: Python Osmium extracted 10 km² from the 384 MB central Italy
+    region in 162 s; allow about 3 minutes per map. Region size affects this cost.
+    Planning, initial regional downloads and final exports are excluded.
     """
     counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0,
                   terrain_tiles=0, osm_maps=0)
@@ -166,10 +165,10 @@ def estimate(run):
                                              for item in stage["results"]))
             counts["terrain_tiles"] = remaining - counts["osm_maps"]
     requests = (counts["streetview_photos"] + metadata_requests
-                + counts["satellite_tiles"] + counts["terrain_tiles"] + counts["osm_maps"])
+                + counts["satellite_tiles"] + counts["terrain_tiles"])
     download_seconds = (counts["streetview_photos"] * 0.55
                         + counts["satellite_tiles"] * 0.37
-                        + counts["terrain_tiles"] * 1.1 + counts["osm_maps"] * 22)
+                        + counts["terrain_tiles"] * 1.1 + counts["osm_maps"] * 180)
     delay_seconds = max(0, requests - 1) * run["options"]["delay"]
     return dict(counts, seconds=math.ceil(download_seconds + delay_seconds))
 
@@ -285,40 +284,15 @@ def capture_satellite(stage, folder, client, progress):
         progress("Satellite", i + 1, total(stage))
 
 
-def validate_osm(data):
-    root = ET.fromstring(data)
-    remark = root.find("remark")
-    if root.tag != "osm" or remark is not None:
-        raise ValueError(f"Incomplete OSM response: {remark.text if remark is not None else 'missing osm root'}")
-    objects = [element for element in root if element.tag in ("node", "way", "relation")]
-    identities = {(element.tag, element.attrib["id"]) for element in objects}
-    if len(identities) != len(objects):
-        raise ValueError("Duplicate OSM objects in the response.")
-    for element in objects:
-        if element.tag == "node" and not {"lat", "lon"} <= element.attrib.keys():
-            raise ValueError("Missing OSM node coordinates.")
-        if any(("node", child.attrib["ref"]) not in identities for child in element.findall("nd")):
-            raise ValueError("Incomplete OSM way geometry. Retry or use a smaller area.")
-    # An area extract intentionally leaves distant relation members unresolved.
-
-
 def capture_osm(stage, area, folder, client, progress):
     failure = None
     if not any(item["filename"] == "map.osm" for item in stage["results"]):
-        progress("Downloading OSM map")
         try:
-            bbox = ",".join(map(str, area))
-            # Complete local ways, without following whole routes or relation trees.
-            data = client.overpass(
-                f"[out:xml][timeout:180][maxsize:536870912];nwr({bbox});(._;node(w););out meta qt;"
-            )
-            progress("Checking OSM map")
-            validate_osm(data)
-            write_bytes(folder / "map.osm", data)
-            stage["results"].append(dict(filename="map.osm", source_url=OVERPASS, captured_at=now()))
+            metadata = client.maps.export(area, folder / "map.osm", progress)
+            stage["results"].append(dict(filename="map.osm", captured_at=now(), **metadata))
             yield
-        except (OSError, ValueError, ET.ParseError) as error:
-            # Keep terrain usable if Overpass fails; report the error after saving it.
+        except (OSError, ValueError) as error:
+            # Keep terrain usable if the map fails; report the error after saving it.
             failure = error
     saved = sum("x" in item for item in stage["results"])
     count = stage["grid"]["rows"] * stage["grid"]["columns"]

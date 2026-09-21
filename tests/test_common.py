@@ -91,18 +91,25 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.urlopen.call_count, 1)
         self.assertLessEqual(self.elapsed, 0.2)
 
-    def test_overpass_falls_back_for_service_errors_but_not_bad_queries(self):
-        for code in (429, 503, 400):
-            with self.subTest(code=code):
-                error = OSError("Overpass failed")
-                error.__cause__ = HTTPError("https://example.test", code, "failed", {}, None)
-                client = common.Client()
-                with patch.object(client, "get", side_effect=[error, b"osm"]) as get:
-                    if code == 400:
-                        with self.assertRaises(OSError) as raised:
-                            client.overpass("query")
-                        self.assertIs(raised.exception, error)
-                        self.assertEqual(get.call_count, 1)
-                    else:
-                        self.assertEqual(client.overpass("query"), b"osm")
-                        self.assertEqual([call.args[0] for call in get.call_args_list], list(common.OVERPASS_SERVERS[:2]))
+    def test_streamed_download_retries_truncation_and_preserves_old_file_on_cancellation(self):
+        def response(data):
+            value = BytesIO(data)
+            value.headers = {"Content-Length": "8"}
+            return value
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "region.pbf"
+            path.write_bytes(b"previous")
+            self.urlopen.side_effect = [response(b"short"), response(b"complete")]
+            common.Client().get("https://example.test/region.pbf", destination=path)
+            self.assertEqual(path.read_bytes(), b"complete")
+            self.assertEqual(self.urlopen.call_count, 2)
+            self.urlopen.side_effect = [response(b"replaced")]
+
+            def cancel(*args):
+                raise KeyboardInterrupt()
+
+            with self.assertRaises(KeyboardInterrupt):
+                common.Client().get("https://example.test/region.pbf", destination=path, progress=cancel)
+            self.assertEqual(path.read_bytes(), b"complete")
+            self.assertEqual(list(path.parent.iterdir()), [path])

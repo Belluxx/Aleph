@@ -1,0 +1,333 @@
+{
+  "date": "2026-09-21",
+  "baseline_commit": "38aa50015fe347a71bcd1c0906376a8a46e3779d",
+  "environment": {
+    "python": "3.12.12 (main, Oct 16 2025, 14:57:37) [Clang 17.0.0 (clang-1700.3.19.1)]",
+    "platform": "macOS-15.7.1-arm64-arm-64bit",
+    "center": [
+      41.8902,
+      12.4922
+    ],
+    "regions": [
+      {
+        "requested_km2": 10,
+        "spherical_km2": 9.99999989734788,
+        "bbox_south_west_north_east": [
+          41.875980496522295,
+          12.473098695094054,
+          41.904419503477705,
+          12.511301304905947
+        ]
+      },
+      {
+        "requested_km2": 1000,
+        "spherical_km2": 999.9989734686736,
+        "bbox_south_west_north_east": [
+          41.74800496522297,
+          12.301186950940533,
+          42.03239503477703,
+          12.683213049059468
+        ]
+      }
+    ]
+  },
+  "network_deadline_seconds": 600,
+  "standalone_geofabrik_download": {
+    "http_code": 200,
+    "size_download": 383641858,
+    "time_total": 13.592244,
+    "url_effective": "https://download.geofabrik.de/europe/italy/centro-260920.osm.pbf"
+  },
+  "overpass": [
+    {
+      "provider": "current_overpass",
+      "kind": "roads",
+      "requested_km2": 10,
+      "spherical_km2": 9.99999989734788,
+      "bbox_south_west_north_east": [
+        41.875980496522295,
+        12.473098695094054,
+        41.904419503477705,
+        12.511301304905947
+      ],
+      "query": "[out:json][timeout:25][maxsize:1073741824];way[\"highway\"](41.875980496522295,12.473098695094054,41.904419503477705,12.511301304905947);out body geom;",
+      "started_at": "2026-09-21T12:02:22.944196+00:00",
+      "attempts": [
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 8.897348375001457
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 7.583786708000844
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 8.210137291000137
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 16.630713708000258
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 107.65975120900112
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "error": "TimeoutError('The read operation timed out')",
+          "headers_or_error_seconds": 240.06496191599945
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 86.85915491600099
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 102.47538841699861
+        },
+        {
+          "url": "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+          "headers_or_error_seconds": 7.599620124998182
+        }
+      ],
+      "status": "failed",
+      "error": "Deadline('Benchmark stopped this query after 600 seconds')",
+      "total_seconds": 600.0076005420015
+    },
+    {
+      "provider": "current_overpass",
+      "kind": "map",
+      "requested_km2": 10,
+      "spherical_km2": 9.99999989734788,
+      "bbox_south_west_north_east": [
+        41.875980496522295,
+        12.473098695094054,
+        41.904419503477705,
+        12.511301304905947
+      ],
+      "query": "[out:xml][timeout:180][maxsize:536870912];nwr(41.875980496522295,12.473098695094054,41.904419503477705,12.511301304905947);(._;node(w););out meta qt;",
+      "started_at": "2026-09-21T12:12:22.925162+00:00",
+      "attempts": [
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 200,
+          "headers_or_error_seconds": 2.9656944579983247
+        }
+      ],
+      "download_seconds": 7.840124750000541,
+      "bytes": 52404541,
+      "valid": true,
+      "counts": {
+        "node": 177570,
+        "way": 32788,
+        "relation": 3082
+      },
+      "highway_ways": 12412,
+      "validation_seconds": 1.7904330419987673,
+      "osm_timestamp": {
+        "osm_base": "2026-09-21T12:10:20Z"
+      },
+      "sha256": "74b078fa9f3d1ddc958969a814d83d62f9bea2adbd7182b1e9c38d83cd62fec8",
+      "status": "ok",
+      "total_seconds": 10.694375208000565
+    },
+    {
+      "provider": "current_overpass",
+      "kind": "roads",
+      "requested_km2": 1000,
+      "spherical_km2": 999.9989734686736,
+      "bbox_south_west_north_east": [
+        41.74800496522297,
+        12.301186950940533,
+        42.03239503477703,
+        12.683213049059468
+      ],
+      "query": "[out:json][timeout:25][maxsize:1073741824];way[\"highway\"](41.74800496522297,12.301186950940533,42.03239503477703,12.683213049059468);out body geom;",
+      "started_at": "2026-09-21T12:12:33.620171+00:00",
+      "attempts": [
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 8.826568917000259
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 9.151510834002693
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 8.84591270799865
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 16.052941875001125
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 92.31481312500182
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 98.98106058299891
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 224.4021728330008
+        },
+        {
+          "url": "https://overpass.private.coffee/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 99.43211099999826
+        },
+        {
+          "url": "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+          "headers_or_error_seconds": 27.963263708999875
+        }
+      ],
+      "status": "failed",
+      "error": "Deadline('Benchmark stopped this query after 600 seconds')",
+      "total_seconds": 600.0040845830008
+    },
+    {
+      "provider": "current_overpass",
+      "kind": "map",
+      "requested_km2": 1000,
+      "spherical_km2": 999.9989734686736,
+      "bbox_south_west_north_east": [
+        41.74800496522297,
+        12.301186950940533,
+        42.03239503477703,
+        12.683213049059468
+      ],
+      "query": "[out:xml][timeout:180][maxsize:536870912];nwr(41.74800496522297,12.301186950940533,42.03239503477703,12.683213049059468);(._;node(w););out meta qt;",
+      "started_at": "2026-09-21T12:22:33.619508+00:00",
+      "attempts": [
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 504,
+          "headers_or_error_seconds": 7.800043290997564
+        },
+        {
+          "url": "https://overpass-api.de/api/interpreter",
+          "status": 200,
+          "headers_or_error_seconds": 16.731868375001795
+        }
+      ],
+      "download_seconds": 62.22662429100092,
+      "bytes": 769374728,
+      "valid": true,
+      "counts": {
+        "node": 3172882,
+        "way": 469157,
+        "relation": 20521
+      },
+      "highway_ways": 163195,
+      "validation_seconds": 113.68387441699815,
+      "osm_timestamp": {
+        "osm_base": "2026-09-21T12:21:34Z"
+      },
+      "sha256": "62fd2a8206a9a2e090cce667d442cd2780539f9877610e6619545d27d0bdc9a5",
+      "status": "ok",
+      "total_seconds": 226.08120658299958
+    }
+  ],
+  "geofabrik": {
+    "results": [
+      {
+        "area_km2": 10,
+        "map_seconds": 15.256952792002267,
+        "map_bytes": 41319499,
+        "source_url": "https://download.geofabrik.de/europe/italy/centro-latest.osm.pbf",
+        "region": "Centro",
+        "osm_data_at": "2026-09-20T20:22:06Z",
+        "cached_map_seconds": 3.3866028749980615,
+        "road_seconds": 3.637508791998698,
+        "highway_ways": 12412
+      },
+      {
+        "area_km2": 1000,
+        "map_seconds": 3.6622887500016077,
+        "map_bytes": 571428870,
+        "source_url": "https://download.geofabrik.de/europe/italy/centro-latest.osm.pbf",
+        "region": "Centro",
+        "osm_data_at": "2026-09-20T20:22:06Z",
+        "road_seconds": 11.716084957999556,
+        "highway_ways": 163195
+      }
+    ],
+    "requests": [
+      [
+        "GET",
+        "https://download.geofabrik.de/index-v1.json",
+        0
+      ],
+      [
+        "GET",
+        "https://download.geofabrik.de/europe/italy/centro-latest.osm.pbf",
+        0
+      ]
+    ]
+  },
+  "checks": {
+    "missing_way_nodes": {
+      "10": 0,
+      "1000": 0
+    },
+    "highway_way_id_sets_match": {
+      "10": true,
+      "1000": true
+    },
+    "tests_passed": 44
+  },
+  "python_osmium": {
+    "version": "4.3.1",
+    "regional_file_cached": true,
+    "network_requests": 0,
+    "results": [
+      {
+        "area_km2": 10,
+        "map_seconds": 161.65,
+        "map_bytes": 41319502,
+        "source_url": "https://download.geofabrik.de/europe/italy/centro-latest.osm.pbf",
+        "region": "Centro",
+        "osm_data_at": "2026-09-20T20:22:06Z",
+        "counts": {
+          "nodes": 177525,
+          "ways": 32787,
+          "relations": 3219
+        },
+        "object_ids_match_native_cli": true,
+        "missing_way_nodes": 0
+      },
+      {
+        "area_km2": 1000,
+        "map_seconds": 173.88,
+        "map_bytes": 571428873,
+        "source_url": "https://download.geofabrik.de/europe/italy/centro-latest.osm.pbf",
+        "region": "Centro",
+        "osm_data_at": "2026-09-20T20:22:06Z",
+        "counts": {
+          "nodes": 3172834,
+          "ways": 469155,
+          "relations": 21004
+        },
+        "object_ids_match_native_cli": true,
+        "missing_way_nodes": 0
+      }
+    ]
+  }
+}

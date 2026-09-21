@@ -34,8 +34,8 @@ class StreetViewTests(unittest.TestCase):
     def test_roads_keep_crossings_but_do_not_bridge_outside_excursions(self):
         points = [(0.25, -1), (0.25, 2), (0.75, 2), (0.75, -1)]
         way = dict(type="way", id=1, tags=dict(highway="residential"),
-                   geometry=[dict(lat=lat, lon=lon) for lat, lon in points])
-        roads = streetview.roads(dict(elements=[way]), (0, 0, 1, 1), "roads")
+                   nodes=[1, 2, 3, 4], points=points)
+        roads = streetview.roads([way], (0, 0, 1, 1), "roads")
         self.assertEqual([road["points"] for road in roads],
                          [[(0.25, 0), (0.25, 1)], [(0.75, 1), (0.75, 0)]])
 
@@ -46,7 +46,7 @@ class StreetViewTests(unittest.TestCase):
         cases = (
             ("intersection", [horizontal, crossing], ["0", "0"], (0, 0), None),
             ("junction", [horizontal, connector], ["0", "0"], (0, 0), "through-road-at-connector"),
-            ("overpass", [horizontal, connector], ["0", "1"], (0, 0), None),
+            ("bridge", [horizontal, connector], ["0", "1"], (0, 0), None),
             ("reversed joined sections", [[(0, -0.001), (0, 0)], [(0, 0.001), (0, 0)]],
              ["0", "0"], (0, 0), "joined-road-sections"),
             ("outside matching radius", [horizontal], ["0"], (0.001, 0), None),

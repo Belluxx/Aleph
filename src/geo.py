@@ -14,6 +14,25 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def ring_contains(ring, point):
+    x, y = point
+    inside = False
+    for (ax, ay), (bx, by) in pairwise(ring):
+        if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+            inside = not inside
+    return inside
+
+
+def signed_area(ring):
+    return sum(a[0] * b[1] - b[0] * a[1] for a, b in pairwise(ring)) / 2
+
+
+def extent(points):
+    """Bounding box in south/west/north/east order, including degenerate boxes."""
+    latitudes, longitudes = zip(*points)
+    return min(latitudes), min(longitudes), max(latitudes), max(longitudes)
+
+
 def distance(a, b):
     lat1, lat2 = map(math.radians, (a[0], b[0]))
     delta = math.radians(b[1] - a[1])

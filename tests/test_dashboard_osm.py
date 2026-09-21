@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from xml.etree import ElementTree as ET
 
 from src.dashboard import Catalog, Handler
-from src.dashboard_osm import display_osm, signed_area
+from src.dashboard_osm import display_osm
+from src.geo import signed_area
 
 
 class DashboardOSMTests(unittest.TestCase):

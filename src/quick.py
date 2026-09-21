@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import capture, places, routes, streetview
 from .common import MissingImagery, RequestError, atomic_path, now, url, write_json
-from .geo import bearing, bounds, coordinate, distance, grid, tiles
+from .geo import bearing, bounds, coordinate, distance, extent, grid, tiles
 
 
 def coverage(client, area, progress):
@@ -48,17 +48,14 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     gaps = []
     if street is not None:
         selected_place = places.choose(client, street, match=match, street=True, endpoint=endpoint)
-        selected_route = routes.resolve(client, selected_place, route=route, reverse=reverse)
+        selected_route = routes.resolve(client, selected_place, route=route, reverse=reverse, progress=progress)
         points = selected_route["points"]
-        south, north = min(p[0] for p in points), max(p[0] for p in points)
-        west, east = min(p[1] for p in points), max(p[1] for p in points)
+        south, west, north, east = extent(points)
         lower, upper = places.around((south, west), 80), places.around((north, east), 80)
         area = bounds((lower[0], lower[1], upper[2], upper[3]))
         views = coverage(client, area, progress)
-        identities = ",".join(map(str, selected_route["way_ids"]))
-        data = places.osm_data(client, f'[out:json][timeout:25];way(id:{identities})->.street;'
-                              'way(around.street:40)["highway"];out body geom;')
-        context = streetview.roads(data, area, "all")
+        ways, _ = client.maps.data(area, progress=progress)
+        context = streetview.roads(ways, area, "all")
         samples, gaps = routes.match_views(views, selected_route, context, stops)
     elif pano_id:
         if not streetview.PANO_ID.fullmatch(pano_id):

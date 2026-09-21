@@ -1,10 +1,9 @@
 """Join named OSM ways into ordered, unbranched street routes."""
 
-import json
 from collections import defaultdict
 from itertools import pairwise
 
-from . import places, streetview
+from . import streetview
 from .common import RequestError
 from .geo import Line, RoadIndex, distance
 
@@ -13,11 +12,8 @@ def chains(ways):
     """Split at real OSM junctions; never join roads merely because they cross."""
     points, edges, neighbors = {}, {}, defaultdict(set)
     for way in sorted(ways, key=lambda item: item["id"]):
-        nodes, geometry = way.get("nodes", []), way.get("geometry", [])
-        if len(nodes) != len(geometry) or len(nodes) < 2:
-            raise RequestError("provider_unavailable", "Incomplete street geometry.")
-        for node, position in zip(nodes, geometry):
-            points[node] = places.point((position["lat"], position["lon"]))
+        nodes = way["nodes"]
+        points.update(zip(nodes, way["points"]))
         for a, b in pairwise(nodes):
             if a == b or distance(points[a], points[b]) < 0.01:
                 continue
@@ -65,23 +61,12 @@ def describe(route, index):
                 closed=route["points"][0] == route["points"][-1])
 
 
-def resolve(client, place, *, route=None, reverse=False):
+def resolve(client, place, *, route=None, reverse=False, progress=lambda *args: None):
     if not place["id"].startswith("way/"):
         raise RequestError("place_not_found", "Choose a street represented by an OSM way.")
-    identity = int(place["id"].split("/")[1])
-    seed = places.osm_data(client, f"[out:json][timeout:25];way({identity});out tags;")["elements"]
-    if not seed or not seed[0].get("tags", {}).get("highway"):
-        raise RequestError("place_not_found", "The selected OSM object is not a street.")
-    name = seed[0]["tags"].get("name")
-    if not name:
-        raise RequestError("place_not_found", "The selected street has no mapped name.")
-    # Follow all connected same-name sections, rather than cutting at a geocoder bbox.
-    data = places.osm_data(client, f'[out:json][timeout:25][maxsize:33554432];way({identity});'
-                           f'complete {{ node(w); way(bn)["highway"]["name"={json.dumps(name)}]; }};'
-                           'out body geom;')
-    ways = [way for way in data["elements"] if way["type"] == "way"
-            and way.get("tags", {}).get("area") != "yes"
-            and not streetview.EXCLUDED.fullmatch(way.get("tags", {}).get("highway", ""))]
+    name, ways = client.maps.street(place, progress)
+    ways = [way for way in ways if way["tags"].get("area") != "yes"
+            and not streetview.EXCLUDED.fullmatch(way["tags"]["highway"])]
     options = chains(ways)
     if not options:
         raise RequestError("place_not_found", "No usable street geometry was found.")

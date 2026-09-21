@@ -3,10 +3,9 @@
 import math
 import re
 from collections import defaultdict
-from itertools import pairwise
-from xml.etree import ElementTree as ET
 
-from .geo import feature
+from .geo import feature, ring_contains, signed_area
+from .osm import objects
 
 DISPLAY_TAGS = {"building", "landuse", "natural", "water", "highway", "waterway"}
 TAGS = DISPLAY_TAGS | {"name", "height", "building:levels", "min_height", "type"}
@@ -68,33 +67,21 @@ def properties(tags, polygon):
 
 def read_osm(path):
     nodes, ways, relations = {}, {}, []
-    try:
-        with path.open("rb") as stream:
-            parser = ET.iterparse(stream, events=("start", "end"))
-            _, root = next(parser)
-            if root.tag != "osm":
-                raise ValueError("Saved OSM data contains no osm root.")
-            for event, element in parser:
-                if event != "end" or element.tag not in ("node", "way", "relation"):
-                    continue
-                identity = int(element.attrib["id"])
-                if element.tag == "node":
-                    nodes[identity] = [float(element.attrib["lon"]), float(element.attrib["lat"])]
-                else:
-                    tags = {tag.attrib["k"]: tag.attrib["v"] for tag in element.findall("tag")}
-                    area = is_area(tags)
-                    tags = {key: value for key, value in tags.items() if key in TAGS}
-                    if element.tag == "way":
-                        refs = [int(nd.attrib["ref"]) for nd in element.findall("nd")]
-                        ways[identity] = refs, tags, area
-                    elif tags.get("type") in ("multipolygon", "boundary", "route", "waterway"):
-                        members = [(int(m.attrib["ref"]), m.get("role", ""))
-                                   for m in element.findall("member") if m.get("type") == "way"]
-                        relations.append((tags, members))
-                # Keep compact coordinates/references, never the complete XML tree.
-                root.clear()
-    except (ET.ParseError, StopIteration) as error:
-        raise ValueError("Saved OSM data contains invalid XML.") from error
+    for element in objects(path):
+        identity = int(element.attrib["id"])
+        if element.tag == "node":
+            nodes[identity] = [float(element.attrib["lon"]), float(element.attrib["lat"])]
+        else:
+            tags = {tag.attrib["k"]: tag.attrib["v"] for tag in element.findall("tag")}
+            area = is_area(tags)
+            tags = {key: value for key, value in tags.items() if key in TAGS}
+            if element.tag == "way":
+                refs = [int(nd.attrib["ref"]) for nd in element.findall("nd")]
+                ways[identity] = refs, tags, area
+            elif tags.get("type") in ("multipolygon", "boundary", "route", "waterway"):
+                members = [(int(m.attrib["ref"]), m.get("role", ""))
+                           for m in element.findall("member") if m.get("type") == "way"]
+                relations.append((tags, members))
     return nodes, ways, relations
 
 
@@ -117,19 +104,6 @@ def rings(identities, ways, nodes):
             ring.extend(refs[1:] if refs[0] == ring[-1] else refs[-2::-1])
         if len(ring) >= 4 and ring[0] == ring[-1]:
             yield [nodes[n] for n in ring], used
-
-
-def signed_area(ring):
-    return sum(a[0] * b[1] - b[0] * a[1] for a, b in pairwise(ring)) / 2
-
-
-def contains(ring, point):
-    x, y = point
-    inside = False
-    for (ax, ay), (bx, by) in pairwise(ring):
-        if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
-            inside = not inside
-    return inside
 
 
 def display_osm(path):
@@ -159,7 +133,7 @@ def display_osm(path):
             polygons.append([ring])
             used.update(identities)
         for ring, identities in rings([ref for ref, role in members if role == "inner"], ways, nodes):
-            owners = [p for p in polygons if contains(p[0], ring[0])]
+            owners = [p for p in polygons if ring_contains(p[0], ring[0])]
             if owners:
                 if signed_area(ring) > 0:
                     ring.reverse()

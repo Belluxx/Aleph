@@ -104,31 +104,17 @@ def image_url(pano_id, heading, fov, pitch=0):
     )
 
 
-def roads(data, area, depth):
-    if data.get("remark") or not isinstance(data.get("elements"), list):
-        raise ValueError(f"Incomplete Overpass response: {data.get('remark', 'missing elements')}")
-    parts, seen_ways, seen_edges = [], set(), set()
-    for way in sorted(data["elements"], key=lambda element: element["id"]):
-        tags = way.get("tags", {})
+def roads(ways, area, depth):
+    parts, seen_edges = [], set()
+    for way in sorted(ways, key=lambda way: way["id"]):
+        tags = way["tags"]
         highway = tags.get("highway", "")
-        if (
-            way["type"] != "way"
-            or not highway
-            or tags.get("area") == "yes"
-            or EXCLUDED.fullmatch(highway)
-        ):
+        if not highway or tags.get("area") == "yes" or EXCLUDED.fullmatch(highway):
             continue
-        if way["id"] in seen_ways or (DEPTHS[depth] and not DEPTHS[depth].fullmatch(highway)):
+        if DEPTHS[depth] and not DEPTHS[depth].fullmatch(highway):
             continue
-        seen_ways.add(way["id"])
-        geometry = way.get("geometry", [])
-        if len(geometry) < 2 or any(
-            p is None or "lat" not in p or "lon" not in p for p in geometry
-        ):
-            raise ValueError("Overpass returned incomplete road geometry.")
-        points = [(p["lat"], p["lon"]) for p in geometry]
+        points, nodes = way["points"], way["nodes"]
         layer, run, part = str(tags.get("layer", "0")), [], 0
-        nodes = way.get("nodes", [f"{p[0]:.7f},{p[1]:.7f}" for p in points])
 
         def flush():
             nonlocal run, part
@@ -150,7 +136,7 @@ def roads(data, area, depth):
             if distance(a, b) <= 0.01:
                 continue
             segment = clip(a, b, area)
-            edge = layer, tuple(sorted((str(nodes[i]), str(nodes[i + 1]))))
+            edge = layer, tuple(sorted((nodes[i], nodes[i + 1])))
             if segment is None or edge in seen_edges:
                 flush()
                 continue
@@ -247,13 +233,8 @@ def select_stops(candidates, spacing):
 
 def plan(client, area, options, progress, *, allow_empty=False):
     progress("Finding roads")
-    bbox = ",".join(map(str, area))
-    data = json.loads(
-        client.overpass(
-            f'[out:json][timeout:25][maxsize:1073741824];way["highway"]({bbox});out body geom;'
-        )
-    )
-    parts = roads(data, area, options["depth"])
+    ways, metadata = client.maps.data(area, progress=progress)
+    parts = roads(ways, area, options["depth"])
     if not parts and not allow_empty:
         raise ValueError("No mapped roads at this path depth. Choose another area or depth.")
     coverage_grid = grid(area, 17)
@@ -305,7 +286,8 @@ def plan(client, area, options, progress, *, allow_empty=False):
         results=[],
         coverage=dict(available=len(found), excluded=excluded, gaps=gaps, spacing=spacing),
         length=sum(line.length for line in lines),
-        osm_data_at=data.get("osm3s", {}).get("timestamp_osm_base"),
+        osm_data_at=metadata["osm_data_at"],
+        osm_source_url=metadata["source_url"],
     )
 
 

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import aleph
 from src.common import Client
+from src.osm import Source
 from tests.fixtures import image_bytes
 
 
@@ -19,7 +20,7 @@ class ConfirmationTests(unittest.TestCase):
                 with (
                     patch("builtins.input", side_effect=[answer]),
                     patch.object(Client, "get", side_effect=AssertionError("Unexpected download")) as get,
-                    patch.object(Client, "overpass", side_effect=AssertionError("Unexpected OSM request")) as overpass,
+                    patch.object(Source, "region", side_effect=AssertionError("Unexpected OSM request")) as region,
                     redirect_stdout(StringIO()) as stdout,
                     redirect_stderr(StringIO()) as stderr,
                 ):
@@ -30,7 +31,7 @@ class ConfirmationTests(unittest.TestCase):
                 self.assertEqual(stdout.getvalue(), "")
                 self.assertFalse(output.exists())
                 get.assert_not_called()
-                overpass.assert_not_called()
+                region.assert_not_called()
 
 
 class CaptureCommandTests(unittest.TestCase):

@@ -10,18 +10,14 @@ import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
-OVERPASS_SERVERS = (
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-)
-OVERPASS = OVERPASS_SERVERS[0]
-APP_AGENT = "Terrain downloader"
+DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "aleph"
+APP_AGENT = "Aleph/0.1"
 BROWSER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15"
 
 
@@ -59,17 +55,26 @@ def contained(parent, name):
 
 
 class Client:
-    def __init__(self, delay=0, cancel=None, request_log=None):
+    def __init__(self, delay=0, cancel=None, request_log=None, *, cache_dir=DEFAULT_CACHE, refresh=False):
         self.delay = delay
         self.cancel = cancel
         self.request_log = request_log
         self.finished = float("-inf")
+        self.cache_dir = Path(cache_dir).expanduser()
+        self.refresh = refresh
+
+    @cached_property
+    def maps(self):
+        from .osm import Source
+
+        return Source(self)
 
     def check_cancel(self):
         if self.cancel:
             self.cancel()
 
-    def get(self, address, *, missing_ok=False, data=None, timeout=60, user_agent=BROWSER_AGENT):
+    def get(self, address, *, missing_ok=False, timeout=60, user_agent=BROWSER_AGENT,
+            destination=None, progress=None):
         for attempt in range(4):
             backoff = 2 ** (attempt - 1) if attempt else 0
             until = time.monotonic() + max(backoff, self.delay - (time.monotonic() - self.finished))
@@ -78,17 +83,32 @@ class Client:
                 time.sleep(min(remaining, 0.2) if self.cancel else remaining)
                 self.check_cancel()
             if self.request_log:
-                self.request_log("POST" if data is not None else "GET", address, attempt)
+                self.request_log("GET", address, attempt)
             try:
                 with urlopen(
-                    Request(address, data=data, headers={"User-Agent": user_agent}), timeout=timeout
+                    Request(address, headers={"User-Agent": user_agent}), timeout=timeout
                 ) as response:
-                    result = response.read()
+                    if destination is None:
+                        result = response.read()
+                    else:
+                        expected = int(response.headers.get("Content-Length", 0))
+                        downloaded = 0
+                        with atomic_path(destination) as temporary, temporary.open("wb") as stream:
+                            while chunk := response.read(1024 * 1024):
+                                self.check_cancel()
+                                stream.write(chunk)
+                                downloaded += len(chunk)
+                                if progress:
+                                    progress(downloaded, expected or None)
+                            if expected and downloaded != expected:
+                                raise OSError("Incomplete download; retrying.")
+                            self.check_cancel()
+                        result = Path(destination)
                 self.check_cancel()
                 return result
             except Exception as error:
                 if self.request_log:
-                    self.request_log("POST" if data is not None else "GET", address, attempt, error)
+                    self.request_log("GET", address, attempt, error)
                 if isinstance(error, HTTPError):
                     error.close()
                     if missing_ok and error.code == 404:
@@ -103,46 +123,24 @@ class Client:
             finally:
                 self.finished = time.monotonic()
 
-    def overpass(self, query):
-        # POST avoids long query URLs; allow the query budget plus server queue time.
-        # Overpass rejects browser UAs.
-        data = urlencode({"data": query}).encode()
-        for endpoint in OVERPASS_SERVERS:
-            try:
-                return self.get(endpoint, data=data, timeout=240, user_agent=APP_AGENT)
-            except OSError as error:
-                cause = error.__cause__
-                if isinstance(cause, HTTPError) and cause.code < 500 and cause.code != 429:
-                    raise
-                failure = error
-        raise failure
-
 
 class CachedClient(Client):
-    """Cache successful quick-query responses for one day, including OSM queries."""
+    """Cache successful quick-query responses for one day."""
 
     def __init__(self, directory, *, refresh=False):
-        super().__init__(delay=1)
-        self.directory = Path(directory).expanduser()
-        self.refresh = refresh
+        super().__init__(delay=1, cache_dir=directory, refresh=refresh)
         self.hits = 0
         self.misses = 0
 
     def get(self, address, **kwargs):
-        payload = kwargs.get("data") or b""
-        key = hashlib.sha256(address.encode() + b"\0" + payload).hexdigest()
-        path = self.directory / key
+        if kwargs.get("destination") is not None:
+            return super().get(address, **kwargs)
+        key = hashlib.sha256(address.encode()).hexdigest()
+        path = self.cache_dir / key
         if not self.refresh and path.is_file() and time.time() - path.stat().st_mtime < 86400:
             self.hits += 1
             return path.read_bytes()
         result = super().get(address, **kwargs)
-        # Do not retain Overpass's HTTP-200 timeout/error responses.
-        if payload:
-            try:
-                if json.loads(result).get("remark"):
-                    return result
-            except (ValueError, AttributeError):
-                return result
         write_bytes(path, result)
         self.misses += 1
         return result

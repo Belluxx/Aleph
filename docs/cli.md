@@ -22,7 +22,7 @@ alephgeo resolve --at 41.8902 12.4922 --nearby --radius 100 --limit 10 --json
 
 Reverse lookup returns the nearest address or named feature. Nearby search returns POIs ordered by distance.
 
-Name lookup uses [Photon](https://github.com/komoot/photon). Set `ALEPH_GEOCODER_URL` or `--geocoder URL` to use another Photon server. Nearby POIs and street geometry use Overpass.
+Name lookup uses [Photon](https://github.com/komoot/photon). Set `ALEPH_GEOCODER_URL` or `--geocoder URL` to use another Photon server. Nearby POIs and street geometry use local Geofabrik extracts.
 
 ## Quick imagery
 
@@ -52,7 +52,7 @@ For example, `--stops 10` requests ten positions along the street. Choose a view
 If Aleph finds several places or street branches, choose from the returned options with `--match ID` or `--route N`, respectively.
 
 > [!TIP]
-> Quick requests start immediately and cache responses for 24 hours. Use `--refresh` to fetch fresh data or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
+> Quick requests start immediately and cache imagery/geocoder responses for 24 hours. OSM roads, nearby POIs, and maps use Geofabrik regional downloads, processed locally with the Python `osmium` dependency. These regional files are retained until explicitly refreshed; the first request may download hundreds of megabytes. Use `--refresh` to fetch fresh responses and regional files, or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
 
 ## Capture an area
 
@@ -63,5 +63,7 @@ alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --no-plan -o capt
 ```
 
 `--bbox` takes two opposite corners: `lat1 lon1 lat2 lon2`. All sources are included; use `--sources satellite osm` to download only satellite imagery, map data, and terrain.
+
+`capture create` and `capture resume` also accept `--cache-dir PATH` and `--refresh`. Geofabrik publishes daily snapshots; repeated captures reuse the regional file until you refresh it. Estimates do not include the first regional download. Map exports retain complete local ways and original relation references; distant relation members may be absent. Named-street routes are joined using OSM node IDs, and nearby ways/relations are represented by their bounding-box centers.
 
 `--no-plan` starts downloading without confirmation (not recommended, as it may take a lot of time). Omit it to review the estimate first, or use `--plan` to save a plan without downloading. See `alephgeo capture create --help` for resolution and spacing options.

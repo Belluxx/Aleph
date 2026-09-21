@@ -6,11 +6,12 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import aleph
 from src import capture, common, routes
+from src.osm import Source
 from tests.fixtures import image_bytes, metadata
 
 
@@ -27,7 +28,7 @@ def place(identity=1, name="Test Street", lat=0, lon=0):
 def way(identity, nodes, points, name="Test Street"):
     return dict(type="way", id=identity, nodes=nodes,
                 tags=dict(highway="residential", name=name),
-                geometry=[dict(lat=p[0], lon=p[1]) for p in points])
+                points=points)
 
 
 def coverage(views):
@@ -57,12 +58,13 @@ class QueryTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["distance_m"], 0)
         address = self.get.call_args.args[0]
         self.assertEqual(parse_qs(urlsplit(address).query)["limit"], ["1"])
-        self.get.return_value = encoded(dict(elements=[
-            dict(type="node", id=2, lat=1, lon=2.0005, tags=dict(name="Cafe", amenity="cafe")),
-            dict(type="way", id=3, center=dict(lat=1, lon=2.0001), tags=dict(name="Museum", tourism="museum")),
-            dict(type="node", id=4, lat=1, lon=2.1, tags=dict(name="Far away", shop="books")),
-        ]))
-        status, result = self.invoke("resolve", "--at", "1", "2", "--nearby", "--radius", "100")
+        data = [
+            dict(type="node", id=2, center=(1, 2.0005), tags=dict(name="Cafe", amenity="cafe")),
+            dict(type="way", id=3, center=(1, 2.0001), tags=dict(name="Museum", tourism="museum")),
+            dict(type="node", id=4, center=(1, 2.1), tags=dict(name="Far away", shop="books")),
+        ]
+        with patch.object(Source, "data", return_value=(data, dict(osm_data_at="2026-09-20T20:00:00Z"))):
+            status, result = self.invoke("resolve", "--at", "1", "2", "--nearby", "--radius", "100")
         self.assertEqual(status, 0)
         self.assertEqual([item["id"] for item in result["results"]], ["way/3", "node/2"])
         self.assertEqual(result["results"][0]["location_type"], "bbox_center")
@@ -125,14 +127,14 @@ class QueryTests(unittest.TestCase):
     def test_street_sequence_orders_split_ways_and_saves_both_sides(self):
         ways = [way(1, [2, 1], [(0, 0.001), (0, 0)]),
                 way(2, [2, 3], [(0, 0.001), (0, 0.002)])]
+        self.enterContext(patch.object(Source, "street", return_value=("Test Street", ways)))
+        self.enterContext(patch.object(Source, "data", return_value=(ways, {})))
         failure, images = None, 0
 
         def response(address, **kwargs):
             nonlocal images
             if "/api/?" in address:
                 return encoded(dict(features=[place()]))
-            if kwargs.get("data"):
-                return encoded(dict(elements=ways))
             if "/ac/v1" in address:
                 return coverage([(f"panorama_{i:04d}", 0, lon) for i, lon in enumerate((0, 0.001, 0.002), 1)])
             if "/photometa/v1" in address:
@@ -213,14 +215,13 @@ class RouteTests(unittest.TestCase):
         ways = [way(1, [1, 2, 3], [(0, 0), (0, 0.001), (0, 0.002)]),
                 way(2, [2, 4], [(0, 0.001), (0.001, 0.001)])]
         self.assertEqual(len(routes.chains(ways)), 3)
-        responses = [dict(elements=[ways[0]]), dict(elements=ways)]
-        with patch.object(routes.places, "osm_data", side_effect=responses):
-            with self.assertRaises(common.RequestError) as raised:
-                routes.resolve(None, dict(id="way/1"))
+        client = Mock()
+        client.maps.street.return_value = ("Test Street", ways)
+        with self.assertRaises(common.RequestError) as raised:
+            routes.resolve(client, dict(id="way/1"))
         self.assertEqual(raised.exception.code, "ambiguous_route")
         choices = raised.exception.details["candidates"]
-        with patch.object(routes.places, "osm_data", side_effect=responses):
-            selected = routes.resolve(None, dict(id="way/1"), route=2, reverse=True)
+        selected = routes.resolve(client, dict(id="way/1"), route=2, reverse=True)
         self.assertEqual(selected["start"], choices[1]["end"])
         self.assertEqual(selected["end"], choices[1]["start"])
         ways[1] = way(2, [5, 4], [(0, 0.001), (0.001, 0.001)])
