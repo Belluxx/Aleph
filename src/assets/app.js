@@ -6,7 +6,7 @@ const empty = () => ({type: "FeatureCollection", features: []});
 const state = {config: null, captures: [], selected: null, map: null, ready: null,
   selection: 0, photos: [], photoCount: 0, photoGroups: new Map(), photoIndex: 0, job: null,
   composing: false, drawing: false, drag: null, draftBounds: null, submitting: false,
-  pendingPlan: null, plan: null,
+  pendingPlan: null, plan: null, loadingCapture: false,
   previousView: null, rotating: null, terrainFocus: null, refreshing: false, lastRefresh: 0, popup: null};
 const form = $("capture-form");
 const maxDrawLatitude = 85.0511287; // Remain inside Mercator bounds after rounding to seven decimals.
@@ -231,6 +231,9 @@ function initializeMap() {
     return Promise.resolve();
   }
   state.map = map;
+  map.on("idle", () => {
+    if (!state.loadingCapture) $("map-loading").hidden = true;
+  });
   initializeMiddleRotation(map);
   initializeAreaDrawing(map);
   map.addControl(new maplibregl.NavigationControl({visualizePitch: true}), "top-right");
@@ -403,7 +406,8 @@ function updateHeader(run) {
 async function selectCapture(identity, fit = true) {
   if (state.composing) return;
   const ticket = ++state.selection;
-  if (fit) $("map-loading").hidden = false;
+  state.loadingCapture = true;
+  if (fit || state.selected?.id !== identity) $("map-loading").hidden = false;
   try {
     const run = await api(runURL(identity));
     await state.ready;
@@ -465,7 +469,12 @@ async function selectCapture(identity, fit = true) {
     for (const result of results) if (result.status === "rejected") notice(result.reason.message);
     applyLayers();
   } finally {
-    if (ticket === state.selection) $("map-loading").hidden = true;
+    if (ticket === state.selection) {
+      state.loadingCapture = false;
+      // URL sources keep loading after addSource returns. Hide only after rendering settles.
+      if (state.map) state.map.triggerRepaint();
+      else $("map-loading").hidden = true;
+    }
   }
 }
 
@@ -734,6 +743,7 @@ async function openCapture(plan = null) {
   state.plan = null;
   state.pendingPlan = null;
   ++state.selection; // Ignore pending library layer requests while selecting a new area.
+  state.loadingCapture = false;
   state.previousView = state.map ? {center: state.map.getCenter(), zoom: state.map.getZoom(), pitch: state.map.getPitch(), bearing: state.map.getBearing(),
     handlers: Object.fromEntries(mapHandlers.map((key) => [key, state.map[key].isEnabled()]))} : null;
   form.reset();
