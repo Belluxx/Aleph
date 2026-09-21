@@ -60,11 +60,11 @@ class DashboardOSMTests(unittest.TestCase):
         self.assertEqual(building["geometry"]["type"], "Polygon")
         self.assertEqual(building["properties"], dict(building="yes", name="Library", _height=9.144,
                                                      _base=9.144, _estimated=False))
-        self.assertEqual(forest["properties"], {"landuse": "forest"})
-        self.assertEqual(pond["properties"], {"natural": "water", "water": "pond"})
+        self.assertEqual(forest["properties"], {"land": True})
+        self.assertEqual(pond["properties"], {"water": True})
         self.assertEqual(road["geometry"]["type"], "LineString")
-        self.assertEqual(road["properties"], {"highway": "residential"})
-        self.assertEqual(stream["properties"], {"waterway": "stream"})
+        self.assertEqual(road["properties"], {"road": True})
+        self.assertEqual(stream["properties"], {"waterway": True})
         self.assertEqual(house["properties"]["_height"], 6)
         self.assertFalse(house["properties"]["_estimated"])
         self.assertEqual(shed["properties"]["_height"], 9)
@@ -83,7 +83,7 @@ class DashboardOSMTests(unittest.TestCase):
         self.save()
         features = display_osm(self.path)["features"]
         self.assertEqual(len(features), 1)
-        self.assertEqual(features[0]["properties"], {"natural": "water"})
+        self.assertEqual(features[0]["properties"], {"water": True})
         geometry = features[0]["geometry"]
         self.assertEqual(geometry["type"], "MultiPolygon")
         polygons = geometry["coordinates"]
@@ -100,7 +100,7 @@ class DashboardOSMTests(unittest.TestCase):
         self.relation(1, [(1, "outer"), (2, "inner")], type="multipolygon")
         self.save()
         features = display_osm(self.path)["features"]
-        self.assertEqual([f["properties"] for f in features], [{"landuse": "forest"}, {"natural": "water"}])
+        self.assertEqual([f["properties"] for f in features], [{"land": True}, {"water": True}])
         self.assertEqual(len(features[0]["geometry"]["coordinates"][0]), 2)
 
     def test_endpoint_reconverts_without_cache_and_reports_invalid_xml(self):

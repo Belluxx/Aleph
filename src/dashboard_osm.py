@@ -3,9 +3,10 @@
 import math
 import re
 from collections import defaultdict
+from itertools import pairwise
 from xml.etree import ElementTree as ET
 
-from .geo import collection, feature
+from .geo import feature
 
 DISPLAY_TAGS = {"building", "landuse", "natural", "water", "highway", "waterway"}
 TAGS = DISPLAY_TAGS | {"name", "height", "building:levels", "min_height", "type"}
@@ -50,17 +51,15 @@ def meters(value, fallback):
 
 def properties(tags, polygon):
     if not polygon:
-        return {key: tags[key] for key in ("highway", "waterway") if key in tags}
-    building = "building" in tags and tags["building"] != "no"
+        return {layer: True for key, layer in (("highway", "road"), ("waterway", "waterway")) if key in tags}
+    building = tags.get("building", "no") != "no"
     land = "building" not in tags and ("landuse" in tags or tags.get("natural") in
                                        ("wood", "grassland", "scrub", "heath"))
     water = tags.get("natural") == "water" or "water" in tags or tags.get("landuse") == "reservoir"
-    if not (building or land or water):
-        return {}
-    result = {key: tags[key] for key in ("building", "landuse", "natural", "water") if key in tags}
+    result = {layer: True for layer, visible in (("land", land), ("water", water)) if visible}
     if building:
         height = meters(tags.get("height"), meters(tags.get("building:levels"), 3) * 3)
-        result.update(_height=height, _base=min(height, meters(tags.get("min_height"), 0)),
+        result.update(building=tags["building"], _height=height, _base=min(height, meters(tags.get("min_height"), 0)),
                       _estimated=not tags.get("height") and not tags.get("building:levels"))
         if "name" in tags:
             result["name"] = tags["name"]
@@ -121,13 +120,13 @@ def rings(identities, ways, nodes):
 
 
 def signed_area(ring):
-    return sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(ring, ring[1:])) / 2
+    return sum(a[0] * b[1] - b[0] * a[1] for a, b in pairwise(ring)) / 2
 
 
 def contains(ring, point):
     x, y = point
     inside = False
-    for (ax, ay), (bx, by) in zip(ring, ring[1:]):
+    for (ax, ay), (bx, by) in pairwise(ring):
         if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
             inside = not inside
     return inside
@@ -182,4 +181,4 @@ def display_osm(path):
                 coordinates.reverse()
             features.append(feature("Polygon" if polygon else "LineString",
                                     [coordinates] if polygon else coordinates, props))
-    return collection(features)
+    return dict(type="FeatureCollection", features=features)

@@ -460,13 +460,13 @@ async function selectCapture(identity, fit = true) {
     if (fit && run.terrain) fitCapture(false);
     if (!updating || newTerrain || fit) applyTerrain(fit && run.terrain);
     if (fit && !run.terrain) fitCapture();
-    const work = [];
     if (run.osm && !map.getSource("osm")) loadOSM(run);
     if (run.layers.streetview && (!map.getSource("photos")
-        || state.photoCount < run.layers.streetview.done)) work.push(loadPhotos(run, ticket));
-    const results = await Promise.allSettled(work);
+        || state.photoCount < run.layers.streetview.done)) {
+      try { await loadPhotos(run, ticket); }
+      catch (error) { if (ticket === state.selection) notice(error.message); }
+    }
     if (ticket !== state.selection) return;
-    for (const result of results) if (result.status === "rejected") notice(result.reason.message);
     applyLayers();
   } finally {
     if (ticket === state.selection) {
@@ -481,17 +481,11 @@ async function selectCapture(identity, fit = true) {
 function loadOSM(run) {
   state.map.addSource("osm", {type: "geojson", data: runURL(run.id, "/osm.geojson"),
     attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>'});
-  const polygon = ["==", ["geometry-type"], "Polygon"];
-  const building = ["all", polygon, ["has", "building"], ["!=", ["get", "building"], "no"]];
-  const land = ["all", polygon,
-    ["any", ["has", "landuse"], ["in", ["get", "natural"], ["literal", ["wood", "grassland", "scrub", "heath"]]]],
-    ["!", ["has", "building"]]];
-  const water = ["all", polygon, ["any", ["==", ["get", "natural"], "water"], ["has", "water"], ["==", ["get", "landuse"], "reservoir"]]];
-  const road = ["all", ["==", ["geometry-type"], "LineString"], ["has", "highway"]];
+  const building = ["has", "building"], road = ["has", "road"];
   const layers = [
-    {id: "land", type: "fill", filter: land, paint: {"fill-color": "--map-land", "fill-opacity": 0.27}},
-    {id: "water", type: "fill", filter: water, paint: {"fill-color": "--map-capture-water", "fill-opacity": 0.6}},
-    {id: "water-lines", type: "line", filter: ["all", ["==", ["geometry-type"], "LineString"], ["has", "waterway"]], paint: {"line-color": "--map-capture-waterway", "line-width": 2}},
+    {id: "land", type: "fill", filter: ["has", "land"], paint: {"fill-color": "--map-land", "fill-opacity": 0.27}},
+    {id: "water", type: "fill", filter: ["has", "water"], paint: {"fill-color": "--map-capture-water", "fill-opacity": 0.6}},
+    {id: "water-lines", type: "line", filter: ["has", "waterway"], paint: {"line-color": "--map-capture-waterway", "line-width": 2}},
     {id: "road-casing", type: "line", filter: road, paint: {"line-color": "--map-capture-road-casing", "line-opacity": 0.8, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.5, 19, 8]}},
     {id: "roads", type: "line", filter: road, paint: {"line-color": "--map-capture-road", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.7, 19, 5]}},
     {id: "buildings", type: "fill", filter: building, paint: {"fill-color": "--map-capture-building", "fill-opacity": 0.5}},
@@ -499,7 +493,7 @@ function loadOSM(run) {
     {id: "buildings-3d", type: "fill-extrusion", filter: building, layout: {visibility: "none"}, paint: {"fill-extrusion-color": "--map-capture-building", "fill-extrusion-height": ["get", "_height"], "fill-extrusion-base": ["get", "_base"], "fill-extrusion-opacity": 0.88}},
   ];
   for (const layer of layers) addLayer({...layer, source: "osm"});
-  // Keep photo dots above polygons regardless of which request finished first.
+  // OSM can become available after photo dots during a live capture.
   if (state.map.getLayer("stops")) state.map.moveLayer("stops", "selection-fill");
 }
 

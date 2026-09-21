@@ -131,12 +131,9 @@ class Tiles:
             if path.is_file():
                 with Image.open(path) as patch:
                     return patch.convert("RGBA")
-        image = Image.new(mode, (size, size))
-        if version and z == grid["zoom"]:
-            if elevation:
-                image.close()
-                image = terrain_tile(contained(folder, "terrain.tif"), grid, x, y)
-        elif version:
+        image = (terrain_tile(contained(folder, "terrain.tif"), grid, x, y)
+                 if elevation and version and z == grid["zoom"] else Image.new(mode, (size, size)))
+        if version and z < grid["zoom"]:
             for dy in range(2):
                 for dx in range(2):
                     with (
