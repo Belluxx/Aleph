@@ -84,21 +84,6 @@ function node(tag, text, className) {
   return element;
 }
 
-function statusIcon(stateName) {
-  const kind = stateName === "complete" ? "complete" : stateName === "failed" ? "failed" : "pending";
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", `status-icon ${kind}`);
-  svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", stateName);
-  const path = document.createElementNS(svg.namespaceURI, "path");
-  path.setAttribute("d", {complete: "m3.5 8.25 2.75 2.75 6.25-6.25", failed: "m4.25 4.25 7.5 7.5m0-7.5-7.5 7.5",
-    pending: "M8 2.75A5.25 5.25 0 1 1 2.75 8"}[kind]);
-  svg.append(path);
-  return svg;
-}
-
 function notice(message) {
   $("notice").querySelector("span").textContent = message;
   $("notice").hidden = false;
@@ -160,9 +145,8 @@ function renderLibrary() {
     button.setAttribute("aria-pressed", String(state.selected?.id === run.id));
     const heading = node("div", undefined, "card-heading");
     heading.append(node("strong", date(run.started_at)));
-    heading.append(statusIcon(status));
     const sources = node("div", undefined, "card-sources");
-    Object.keys(run.layers).forEach((key) => sources.append(node("span", names[key], "tag")));
+    Object.keys(run.layers).forEach((key) => sources.append(node("span", names[key], "card-source")));
     button.append(heading, node("div", coordinates, "card-coordinates"), sources);
     button.addEventListener("click", () => selectCapture(run.id).catch((error) => notice(error.message)));
     const available = {
@@ -179,6 +163,7 @@ function renderLibrary() {
       if (action.dataset.action === "resume" && run.state === "planned") {
         action.title = "Review capture plan";
         action.setAttribute("aria-label", action.title);
+        action.querySelector("span").textContent = "Review plan";
       }
       action.addEventListener("click", () => {
         more.open = false;
@@ -188,7 +173,10 @@ function renderLibrary() {
         return runAction(run.id, action.dataset.action);
       });
     }
-    card.append(button, actions);
+    const footer = node("div", undefined, "card-footer");
+    if (!currentJob) footer.append(node("span", status.charAt(0).toUpperCase() + status.slice(1), "card-status"));
+    footer.append(actions);
+    card.append(button, footer);
     fragment.append(card);
     if (currentJob) jobCard = card;
   }
@@ -196,13 +184,14 @@ function renderLibrary() {
     jobCard = node("article", undefined, "capture-card");
     jobCard.dataset.state = state.job.state;
     const heading = node("div", undefined, "card-heading pending-heading");
-    heading.append(node("strong", "New capture"), statusIcon(state.job.state));
-    jobCard.append(heading);
+    heading.append(node("strong", "New capture"));
+    jobCard.append(heading, node("div", undefined, "card-footer"));
     fragment.prepend(jobCard);
   }
   if (!fragment.childNodes.length) fragment.append(node("p", state.captures.length ? "No matching captures." : "No captures yet.", "muted empty-list"));
   $("captures").replaceChildren(fragment);
-  (jobCard || $("captures")).append(jobPanel);
+  (jobCard?.querySelector(".card-footer") || $("captures")).prepend(jobPanel);
+  $("view-job").hidden = !state.job?.run_id || state.captures.some((run) => run.id === state.job.run_id);
 }
 
 async function refreshLibrary(initial = false) {
@@ -1053,7 +1042,7 @@ function renderJob(job) {
   $("stop-job").setAttribute("aria-label", stopLabel);
   $("stop-job").title = stopLabel;
   $("dismiss-job").hidden = job.active;
-  $("view-job").hidden = !job.run_id || job.run_id === state.selected?.id;
+  $("view-job").hidden = !job.run_id || state.captures.some((run) => run.id === job.run_id);
   $("job-error").hidden = !job.error;
   $("job-error").title = job.error || "";
   $("new-capture").disabled = $("welcome-new").disabled = job.active;

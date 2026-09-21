@@ -51,11 +51,10 @@
       <div id="captures" class="capture-list" aria-live="polite"><p class="muted empty-list">Loading captures…</p></div>
       <template id="capture-actions">
         <div class="card-actions">
-          <button data-action="resume" class="icon-button" aria-label="Resume capture" title="Resume capture"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 4.5a.75.75 0 0 1 1.14-.64l8.5 5.5a.75.75 0 0 1 0 1.28l-8.5 5.5A.75.75 0 0 1 6 15.5Z"/></svg></button>
+          <button data-action="resume" class="card-resume" aria-label="Resume capture" title="Resume capture"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 4.5a.75.75 0 0 1 1.14-.64l8.5 5.5a.75.75 0 0 1 0 1.28l-8.5 5.5A.75.75 0 0 1 6 15.5Z"/></svg><span>Resume</span></button>
           <details class="card-more">
             <summary class="icon-button" aria-label="Other capture options" title="Other options"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/></svg></summary>
             <div class="card-options">
-              <span class="eyebrow">Other options</span>
               <button data-action="export" title="Rebuild saved previews and exports">Rebuild exports</button>
             </div>
           </details>
@@ -70,8 +69,8 @@
         <button id="job-error" class="job-error" aria-label="Show capture error details" hidden>Details</button>
         <div class="job-actions">
           <button id="view-job" hidden>View capture</button>
-          <button id="stop-job" class="icon-button" aria-label="Stop capture" title="Stop capture"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="10" height="10"/></svg></button>
-          <button id="dismiss-job" class="quiet" hidden aria-label="Dismiss progress">✕</button>
+          <button id="stop-job" aria-label="Stop capture" title="Stop capture"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="10" height="10"/></svg><span>Stop</span></button>
+          <button id="dismiss-job" class="icon-button" hidden aria-label="Dismiss progress" title="Dismiss progress"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.5"/></svg></button>
         </div>
       </section>
       <div class="root-info">Workspace<code id="root-path"></code></div>
