@@ -8,6 +8,12 @@ from tests.fixtures import metadata
 
 
 class StreetViewTests(unittest.TestCase):
+    def test_pitch_converts_positive_up_to_provider_positive_down(self):
+        for pitch in (-20, 0, 20):
+            with self.subTest(pitch=pitch):
+                query = parse_qs(urlsplit(streetview.image_url("panorama_0001", 0, 75, pitch)).query)
+                self.assertEqual(float(query["pitch"][0]), -pitch)
+
     def test_fov_bounds_and_integer_serialization(self):
         for value in (5, 75.0, 175):
             with self.subTest(value=value):

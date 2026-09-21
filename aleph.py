@@ -77,7 +77,7 @@ def parser():
     angle = street.add_mutually_exclusive_group()
     angle.add_argument("--heading", type=float, help="single-view heading clockwise from north, any finite float32 degrees (default: 0)")
     angle.add_argument("--look-at", nargs=2, type=float, metavar=("LAT", "LON"), help="turn a single view toward this point")
-    street.add_argument("--pitch", type=float, default=0, help="vertical angle, any finite float32 degrees (default: 0)")
+    street.add_argument("--pitch", type=float, default=0, help="vertical angle, positive up and negative down; any finite float32 degrees (default: 0)")
     street.add_argument("--fov", type=int, default=75, help="horizontal field of view, 5–175 whole degrees (default: 75)")
     street.add_argument("--radius", type=float, help="maximum panorama search distance in meters (default: 50)")
     street.add_argument("--image-format", choices=("jpg", "png"), default="jpg")

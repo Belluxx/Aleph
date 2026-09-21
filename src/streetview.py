@@ -114,7 +114,8 @@ def image_url(pano_id, heading, fov, pitch=0):
         w=1024,
         h=576,
         yaw=validate_angle(heading, "heading"),
-        pitch=validate_angle(pitch, "pitch"),
+        # The thumbnail service uses positive-down; Aleph uses positive-up.
+        pitch=-validate_angle(pitch, "pitch"),
         thumbfov=validate_fov(fov),
     )
 

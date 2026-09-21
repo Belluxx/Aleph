@@ -109,7 +109,7 @@ class QueryTests(unittest.TestCase):
             if "/thumbnail" in address:
                 values = parse_qs(urlsplit(address).query)
                 self.assertAlmostEqual(float(values["yaw"][0]), 90, places=3)
-                self.assertEqual(values["pitch"], ["10.0"])
+                self.assertEqual(values["pitch"], ["-10.0"])
                 self.assertEqual(values["thumbfov"], ["175"])
                 return image_bytes((1024, 576), "blue")
             self.fail(f"Unexpected request: {address}")
@@ -219,7 +219,7 @@ class QueryTests(unittest.TestCase):
                 return metadata()
             values = parse_qs(urlsplit(address).query)
             self.assertEqual(values["yaw"], ["-720.5"])
-            self.assertEqual(values["pitch"], ["100.25"])
+            self.assertEqual(values["pitch"], ["-100.25"])
             return image_bytes((1024, 576), "blue")
 
         self.get.side_effect = response
