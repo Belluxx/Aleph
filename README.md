@@ -1,9 +1,14 @@
 ![Aleph](resources/readme-banner.svg)
 
+<p align="center">
+  Download a piece of the world<br>
+  for you (<em>or your agent</em>)
+</p>
+
 Aleph does two things:
 
 - Lets you draw a rectangle on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos).
-- Provides any of the above information for **specific points** on Earth, on the fly.
+- Provides any of the above information for **specific points** on Earth, on the fly, via the CLI.
 
 This was born as a way to let LLMs quickly gather information from the physical world, but you can just use it to have piece of the Earth on your laptop and do whatever you want with it.
 
