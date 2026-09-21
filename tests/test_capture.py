@@ -209,7 +209,12 @@ class CaptureRecoveryTests(unittest.TestCase):
                            dict(include=["osm"], terrain_zoom=1), self.progress)
         failure = OSError("Geofabrik unavailable")
         self.client.maps.export.side_effect = failure
-        self.client.get.side_effect = [terrain_bytes(1, 0, 1)]
+
+        def download_terrain(address):
+            self.progress.assert_called_with("Downloading terrain tiles (map failed: Geofabrik unavailable)", 0, 1)
+            return terrain_bytes(1, 0, 1)
+
+        self.client.get.side_effect = download_terrain
         with self.assertRaises(OSError) as raised:
             capture.download(run, self.folder, self.client, self.progress)
         self.assertIs(raised.exception, failure)

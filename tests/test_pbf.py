@@ -163,12 +163,15 @@ class PBFTests(unittest.TestCase):
         self.assertEqual(geometry["type"], "MultiPolygon")
         self.assertEqual(len(geometry["coordinates"][0]), 2)  # Closed outer and courtyard.
 
-    def test_missing_multipolygon_way_preserves_previous_output(self):
+    def test_missing_multipolygon_way_keeps_available_geometry_and_original_references(self):
         self.path.write_bytes(multipolygon_snapshot(missing_way=True))
-        self.output.write_bytes(b"previous")
-        with self.assertRaisesRegex(ValueError, "missing multipolygon member ways"):
-            PBF(self.path).export((-.0011, -.0011, -.0009, -.0009), self.output)
-        self.assertEqual(self.output.read_bytes(), b"previous")
+        PBF(self.path).export((-.0011, -.0011, -.0009, -.0009), self.output)
+        root = ET.parse(self.output).getroot()
+        self.assertEqual([int(w.attrib["id"]) for w in root.findall("way")], [10, 15, 30])
+        self.assertIsNotNone(root.find("relation[@id='100']/member[@ref='20']"))
+        nodes = {n.attrib["id"] for n in root.findall("node")}
+        self.assertTrue(all(nd.attrib["ref"] in nodes for nd in root.findall("way/nd")))
+        self.assertEqual(display_osm(self.output)["features"], [])  # Do not invent the missing outline.
 
     def test_standalone_script_runs_without_site_packages(self):
         source = Path(__file__).parent / "data" / "dense.osm.pbf"

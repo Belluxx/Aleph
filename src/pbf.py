@@ -672,7 +672,7 @@ class PBF:
         tasks = ((self.path, entry, xml, None) for entry in entries)
         way_blocks = []
         results = self.parallel(scan_ways, tasks, spatial_nodes, (array("q", spatial),))
-        for entry, (bounds, selected) in zip(entries, results):
+        for entry, (bounds, selected) in zip(entries, results, strict=True):
             if xml:
                 identities, refs, chunk = selected
                 ways.update(identities)
@@ -714,6 +714,7 @@ class PBF:
         if xml:
             # Revisit only blocks containing missing polygon members. Keep the
             # existing XML and merge added ways in ID order without duplicates.
+            # Members absent from the regional file keep their original references.
             missing = sorted(extra_ways - ways)
             tasks, entries = [], []
             for entry, (first, last) in way_blocks:
@@ -729,8 +730,6 @@ class PBF:
                     merged = sorted(chain(zip(previous, original.splitlines(keepends=True)),
                                           zip(identities, chunk.splitlines(keepends=True))))
                     self.way_xml[entry[0]] = (), b"".join(part for _, part in merged)
-            if not extra_ways <= ways:
-                raise ValueError("PBF source is missing multipolygon member ways.")
         return nodes, ways, relations
 
     def nodes(self, wanted, mode="points"):

@@ -43,7 +43,7 @@ DEFAULT_OPTIONS = dict(
 
 OSM_NOTES = {
     "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
-    "selection": "Bounding-box selection with complete ways and directly selected multipolygons, including outer boundaries and holes. Other relations retain their original references and may remain incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
+    "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
     "terrain": "Float32 heights in meters, EPSG:3857. Original compressed blocks retained without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
@@ -296,7 +296,7 @@ def capture_osm(stage, area, folder, client, progress):
             failure = error
     saved = sum("x" in item for item in stage["results"])
     count = stage["grid"]["rows"] * stage["grid"]["columns"]
-    label = "Downloading terrain tiles" if failure is None else "Downloading terrain tiles (OSM unavailable)"
+    label = "Downloading terrain tiles" if failure is None else f"Downloading terrain tiles (map failed: {failure})"
     progress(label, saved, count)
     for i, tile in enumerate(tiles(stage["grid"])):
         if i < saved:
