@@ -2,8 +2,10 @@
 
 import json
 import math
+import struct
 import tempfile
 import time
+import zlib
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -339,6 +341,42 @@ def capture_osm(stage, area, folder, client, progress):
         raise failure
 
 
+def merge_satellite(stage, folder):
+    """Write RGBA PNG scanlines with at most one tile row decoded at a time."""
+    mosaic = stage["grid"]
+    width, height = mosaic["width"], mosaic["height"]
+    bottom = mosaic["top"] + height
+    with atomic_path(folder / "satellite.png") as temporary, temporary.open("wb") as output:
+        def chunk(kind, data):
+            output.write(struct.pack(">I", len(data)))
+            output.write(kind)
+            output.write(data)
+            output.write(struct.pack(">I", zlib.crc32(data, zlib.crc32(kind))))
+
+        output.write(b"\x89PNG\r\n\x1a\n")
+        chunk(b"IHDR", struct.pack(">2I5B", width, height, 8, 6, 0, 0, 0))
+        compressor = zlib.compressobj()
+        with Image.new("RGBA", (width, min(256, height))) as strip:
+            for row in range(mosaic["rows"]):
+                tile_top = (mosaic["y0"] + row) * 256
+                top = max(mosaic["top"], tile_top)
+                strip_height = min(bottom, tile_top + 256) - top
+                strip.paste((0, 0, 0, 0), (0, 0, width, strip.height))
+                # Saved patches are a row-major prefix, including transparent gaps.
+                first = row * mosaic["columns"]
+                for photo in stage["results"][first:first + mosaic["columns"]]:
+                    with open_image((folder / photo["filename"]).read_bytes(), (256, 256)) as patch:
+                        strip.paste(patch, (photo["x"] * 256 - mosaic["left"], tile_top - top))
+                for y in range(strip_height):
+                    with strip.crop((0, y, width, y + 1)) as scanline:
+                        # Filter 0 keeps encoding simple and requires no previous row.
+                        data = compressor.compress(b"\0" + scanline.tobytes())
+                    if data:
+                        chunk(b"IDAT", data)
+        chunk(b"IDAT", compressor.flush())
+        chunk(b"IEND", b"")
+
+
 def export(run, folder, progress, *, rebuild=True):
     """Also works offline, on partial runs, or after a failed final export."""
     # Commit capture progress before merging, which can fail or be interrupted.
@@ -353,16 +391,7 @@ def export(run, folder, progress, *, rebuild=True):
                 collection(feature("Polygon", [tile_ring(p)], p) for p in stage["results"]),
             )
             progress("Merging satellite image")
-            mosaic = stage["grid"]
-            with Image.new("RGBA", (mosaic["width"], mosaic["height"])) as image:
-                for photo in stage["results"]:
-                    with open_image((folder / photo["filename"]).read_bytes(), (256, 256)) as patch:
-                        image.paste(
-                            patch,
-                            (photo["x"] * 256 - mosaic["left"], photo["y"] * 256 - mosaic["top"]),
-                        )
-                with atomic_path(folder / "satellite.png") as temporary:
-                    image.save(temporary, format="PNG")
+            merge_satellite(stage, folder)
         elif stage["mode"] == "osm":
             terrain_results = [item for item in stage["results"] if "x" in item]
             count = stage["grid"]["rows"] * stage["grid"]["columns"]
