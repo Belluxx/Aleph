@@ -17,6 +17,7 @@ from PIL import features
 
 from . import capture
 from .common import Client, contained, now
+from .dashboard_osm import display_osm
 from .dashboard_tiles import Tiles
 from .geo import bounds
 
@@ -292,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def json(self, value, status=200):
-        data = json.dumps(value, allow_nan=False).encode()
+        data = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
         self.headers_for(status, "application/json; charset=utf-8", len(data))
         if self.command != "HEAD":
             self.wfile.write(data)
@@ -359,6 +360,9 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) == 4 and parts[3] == "photos":
                     query = parse_qs(urlsplit(self.path).query)
                     return self.json(self.server.catalog.photos(identity, int(query.get("after", ["0"])[0])))
+                if len(parts) == 4 and parts[3] == "osm.geojson":
+                    folder = self.server.catalog.folder(identity)
+                    return self.json(display_osm(contained(folder, "map.osm")))
                 if len(parts) > 4 and parts[3] == "files":
                     return self.file(self.server.catalog.file(identity, "/".join(parts[4:])))
                 if len(parts) == 8 and parts[3] == "tiles" and parts[4] in ("satellite", "terrain"):

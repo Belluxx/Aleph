@@ -457,7 +457,7 @@ async function selectCapture(identity, fit = true) {
     if (!updating || newTerrain || fit) applyTerrain(fit && run.terrain);
     if (fit && !run.terrain) fitCapture();
     const work = [];
-    if (run.osm && !map.getSource("osm")) work.push(loadOSM(run, ticket));
+    if (run.osm && !map.getSource("osm")) loadOSM(run);
     if (run.layers.streetview && (!map.getSource("photos")
         || state.photoCount < run.layers.streetview.done)) work.push(loadPhotos(run, ticket));
     const results = await Promise.allSettled(work);
@@ -469,31 +469,8 @@ async function selectCapture(identity, fit = true) {
   }
 }
 
-function meters(value, fallback) {
-  const match = String(value ?? "").trim().match(/^([\d.]+)\s*(m|ft|')?$/i);
-  if (!match) return fallback;
-  const number = Number(match[1]) * (/ft|'/i.test(match[2] || "") ? 0.3048 : 1);
-  return Number.isFinite(number) ? Math.max(0, Math.min(1500, number)) : fallback;
-}
-
-async function loadOSM(run, ticket) {
-  const response = await fetch(fileURL(run.id, "map.osm") + `?v=${run.revision}`);
-  if (!response.ok) throw new Error("Saved OSM data could not be loaded.");
-  const xml = await response.text();
-  if (ticket !== state.selection) return;
-  const document = new DOMParser().parseFromString(xml, "application/xml");
-  if (document.querySelector("parsererror")) throw new Error("Saved OSM data contains invalid XML.");
-  const data = osmtogeojson(document, {flatProperties: true});
-  for (const feature of data.features) {
-    const p = feature.properties;
-    if (p.building) {
-      p._height = meters(p.height, meters(p["building:levels"], 3) * 3);
-      p._base = Math.min(p._height, meters(p.min_height, 0));
-      p._estimated = !p.height && !p["building:levels"];
-    }
-  }
-  if (ticket !== state.selection) return;
-  state.map.addSource("osm", {type: "geojson", data,
+function loadOSM(run) {
+  state.map.addSource("osm", {type: "geojson", data: runURL(run.id, "/osm.geojson"),
     attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>'});
   const polygon = ["==", ["geometry-type"], "Polygon"];
   const building = ["all", polygon, ["has", "building"], ["!=", ["get", "building"], "no"]];
