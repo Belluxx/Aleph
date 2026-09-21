@@ -6,15 +6,17 @@
       <rect x="36" y="77" width="1130" height="232" rx="116"/>
     </clipPath>
     <filter id="banner-ink" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
-      <feTurbulence type="fractalNoise" baseFrequency=".17" numOctaves="3" seed="12" result="grain"/>
-      <feDisplacementMap in="SourceGraphic" in2="grain" scale="2.1" xChannelSelector="R" yChannelSelector="G"/>
+      <feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="2" seed="12" result="wobble"/>
+      <feDisplacementMap in="SourceGraphic" in2="wobble" scale="10" xChannelSelector="R" yChannelSelector="G" result="drawn"/>
+      <feTurbulence type="fractalNoise" baseFrequency=".17" numOctaves="2" seed="12" result="grain"/>
+      <feDisplacementMap in="drawn" in2="grain" scale=".65" xChannelSelector="R" yChannelSelector="G"/>
     </filter>
   </defs>
   <g clip-path="url(#banner-pill)">
     <rect x="36" y="77" width="1130" height="232" fill="#1B1B18"/>
-    <!-- The original ink texture, scaled to the larger map, stays inside the pill. -->
+    <!-- Broad pen wobble survives downscaling; fine grain adds a light ink edge. -->
     <g filter="url(#banner-ink)">
-    <g stroke="#F8F4E9" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#F8F4E9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
       <path d="M60 119C78 114 102 125 119 138C137 152 143 169 135 188C128 205 120 218 127 237C133 255 149 264 151 282C153 293 148 305 142 317"/>
       <path d="M34 169C48 159 65 162 80 168C100 176 102 189 98 204C93 220 89 231 97 248C105 266 129 278 122 297L120 301"/>
       <path d="M120 88C125 105 138 121 155 135C171 149 176 162 170 180C166 194 154 205 157 221C159 235 172 244 178 258C187 278 178 297 168 315"/>
