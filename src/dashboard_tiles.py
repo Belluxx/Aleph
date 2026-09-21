@@ -82,7 +82,7 @@ def tile_state(grid, count, z, x, y):
 class Tiles:
     def __init__(self, cache):
         self.cache = cache
-        self.lock = threading.Lock()
+        self.locks = {kind: threading.Lock() for kind in ("satellite", "terrain")}
         self.versions = {}
 
     def get(self, folder, run, kind, z, x, y):
@@ -98,9 +98,17 @@ class Tiles:
         grid = stage["grid"]
         count = len(stage["results"]) if kind == "satellite" else grid["columns"] * grid["rows"]
         version, complete = tile_state(grid, count, z, x, y)
+        # Native imagery is already browser-readable; avoid decoding or re-encoding it.
+        if kind == "satellite" and version and z == grid["zoom"]:
+            original = contained(folder, stage["results"][version - 1]["filename"])
+            if original.is_file():
+                return original, complete
         filename = directory / str(z) / str(x) / f"{y}.png"
-        # Limit concurrent decoding and avoid two requests writing the same cache tile.
-        with self.lock:
+        # Published cache files are atomic. Ready tiles never wait for an overview build.
+        if self.versions.get(filename, -1) >= version:
+            return filename, complete
+        # Bound decoding to one tree per layer, without terrain blocking satellite imagery.
+        with self.locks[kind]:
             if self.versions.get(filename, -1) < version:
                 with self._image(folder, directory, grid, stage["results"], count, kind, z, x, y) as image:
                     if kind == "terrain":
@@ -118,17 +126,16 @@ class Tiles:
         if self.versions.get(filename, -1) >= version:
             with Image.open(filename) as image:
                 return image.copy()
+        if not elevation and version and z == grid["zoom"]:
+            path = contained(folder, results[version - 1]["filename"])
+            if path.is_file():
+                with Image.open(path) as patch:
+                    return patch.convert("RGBA")
         image = Image.new(mode, (size, size))
         if version and z == grid["zoom"]:
             if elevation:
                 image.close()
                 image = terrain_tile(contained(folder, "terrain.tif"), grid, x, y)
-            else:
-                item = results[version - 1]
-                path = contained(folder, item["filename"])
-                if path.is_file():
-                    with Image.open(path) as patch:
-                        image.paste(patch)
         elif version:
             for dy in range(2):
                 for dx in range(2):
