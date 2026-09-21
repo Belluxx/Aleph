@@ -1,4 +1,6 @@
-![Aleph](resources/readme-banner.svg)
+<p align="center">
+  <img src="resources/readme-banner.svg" alt="Aleph" width="600">
+</p>
 
 <p align="center">
   Download a piece of the world<br>
