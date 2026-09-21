@@ -264,7 +264,13 @@ def capture_satellite(stage, folder, client, progress):
         if i < len(stage["results"]):
             continue
         address = f"https://mt1.google.com/vt/lyrs=s&x={tile['x']}&y={tile['y']}&z={tile['zoom']}"
-        data = client.get(address)
+        try:
+            data = client.get(address, missing_ok=True)
+        except MissingImagery:
+            # Persist the gap so resume and offline export keep it transparent.
+            with BytesIO() as buffer, Image.new("RGBA", (256, 256)) as image:
+                image.save(buffer, format="PNG")
+                data = buffer.getvalue()
         with open_image(data, (256, 256)) as image:
             extension = "jpg" if image.format == "JPEG" else "png"
         name = (

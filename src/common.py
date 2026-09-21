@@ -91,13 +91,11 @@ class Client:
                     self.request_log("POST" if data is not None else "GET", address, attempt, error)
                 if isinstance(error, HTTPError):
                     error.close()
+                    if missing_ok and error.code == 404:
+                        raise MissingImagery("The requested image is not available.") from error
                 if attempt < 3:
                     continue
                 if isinstance(error, HTTPError):
-                    if missing_ok and error.code == 404:
-                        raise MissingImagery(
-                            "The panorama image is no longer available."
-                        ) from error
                     raise OSError(
                         f"{urlsplit(address).hostname}: HTTP {error.code}. Resume to retry."
                     ) from error

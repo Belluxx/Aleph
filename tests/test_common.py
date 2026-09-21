@@ -65,18 +65,19 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.urlopen.call_count, 4)
         self.assertEqual(self.sleeps, [3, 3, 4])
 
-    def test_only_opted_in_404_becomes_missing_imagery_after_retries(self):
+    def test_only_opted_in_404_becomes_missing_imagery_without_retries(self):
         for code, missing_ok, expected in ((404, True, common.MissingImagery), (404, False, OSError), (500, True, OSError)):
             with self.subTest(code=code, missing_ok=missing_ok):
-                errors = [HTTPError("https://example.test/tile", code, "unavailable", {}, BytesIO()) for _ in range(4)]
+                attempts = 1 if code == 404 and missing_ok else 4
+                errors = [HTTPError("https://example.test/tile", code, "unavailable", {}, BytesIO()) for _ in range(attempts)]
                 self.urlopen.reset_mock(side_effect=True)
                 self.urlopen.side_effect = errors
                 self.sleeps.clear()
                 with self.assertRaises(expected) as raised:
                     common.Client().get("https://example.test/tile", missing_ok=missing_ok)
                 self.assertIs(raised.exception.__cause__, errors[-1])
-                self.assertEqual(self.urlopen.call_count, 4)
-                self.assertEqual(self.sleeps, [1, 2, 4])
+                self.assertEqual(self.urlopen.call_count, attempts)
+                self.assertEqual(self.sleeps, [] if attempts == 1 else [1, 2, 4])
                 self.assertTrue(all(error.fp.closed for error in errors))
 
     def test_cancellation_during_backoff_stops_before_another_request(self):

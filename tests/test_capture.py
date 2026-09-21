@@ -1,8 +1,10 @@
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
@@ -136,6 +138,33 @@ class CaptureRecoveryTests(unittest.TestCase):
             self.assertEqual(mosaic.size, (256, 256))
             self.assertEqual([mosaic.getpixel(point) for point in ((0, 0), (255, 0), (0, 255), (255, 255))],
                              [(*color, 255) for color in colors])
+
+    def test_satellite_404_leaves_transparent_tile_without_retrying_on_resume(self):
+        north, west = geo.coordinate(384, 384, 2)
+        south, east = geo.coordinate(640, 640, 2)
+        run = capture.plan(self.client, [south, west, north, east],
+                           dict(include=["satellite"], satellite_zoom=2), self.progress)
+        missing = HTTPError("https://mt1.google.com/vt/", 404, "Not Found", {}, BytesIO())
+        responses = [BytesIO(image_bytes((256, 256), "red")), missing,
+                     BytesIO(image_bytes((256, 256), "blue")),
+                     BytesIO(image_bytes((256, 256), "green"))]
+        with patch("src.common.urlopen", side_effect=responses) as get:
+            capture.download(run, self.folder, Client(), self.progress)
+            self.assertEqual(get.call_count, 4)
+        self.assertTrue(missing.fp.closed)
+        saved = capture.load(self.folder)
+        self.assertEqual(saved["state"], "complete")
+        original = (self.folder / "satellite.png").read_bytes()
+        with Image.open(self.folder / "satellite.png") as mosaic:
+            self.assertEqual(mosaic.size, (256, 256))
+            self.assertEqual(mosaic.getpixel((0, 0)), (255, 0, 0, 255))
+            self.assertEqual(mosaic.crop((128, 0, 256, 128)).getchannel("A").getextrema(), (0, 0))
+            self.assertEqual(mosaic.getpixel((0, 255)), (0, 0, 255, 255))
+            self.assertEqual(mosaic.getpixel((255, 255)), (0, 128, 0, 255))
+        self.client.get.reset_mock()
+        capture.download(saved, self.folder, self.client, self.progress)
+        self.client.get.assert_not_called()
+        self.assertEqual((self.folder / "satellite.png").read_bytes(), original)
 
     def test_osm_failure_still_saves_terrain_and_resume_fetches_only_map(self):
         run = capture.plan(self.client, [1, 1, 2, 2],
