@@ -69,16 +69,15 @@ def settings(values=None):
                 or value < 0 or (key == "step" and value == 0)):
             requirement = "positive" if key == "step" else "nonnegative"
             raise ValueError(f"{key}: use a {requirement} finite number.")
+    options["fov"] = streetview.validate_fov(options["fov"])
     for key, low, high in (
-        ("fov", 20, 120),
         ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14),
     ):
         value = options[key]
         if (type(value) not in (int, float) or not math.isfinite(value)
-                or not low <= value <= high or (key.endswith("zoom") and int(value) != value)):
-            raise ValueError(f"{key}: use {'a whole number' if key.endswith('zoom') else 'a number'} from {low} to {high}.")
-        if key.endswith("zoom"):
-            options[key] = int(value)
+                or not low <= value <= high or int(value) != value):
+            raise ValueError(f"{key}: use a whole number from {low} to {high}.")
+        options[key] = int(value)
     if options["depth"] not in ("main", "roads", "all"):
         raise ValueError("Choose main, roads, or all for depth.")
     if options["image_format"] not in ("jpg", "png"):

@@ -91,6 +91,21 @@ def metadata_url(pano_id):
     )
 
 
+def validate_angle(value, name):
+    # Google's pitch and yaw fields use protobuf TYPE_FLOAT.
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or abs(value) > float.fromhex("0x1.fffffep+127")):
+        raise ValueError(f"{name}: use a finite 32-bit float in degrees.")
+    return value
+
+
+def validate_fov(value):
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or not 5 <= value <= 175 or int(value) != value):
+        raise ValueError("fov: use a whole number from 5 to 175.")
+    return int(value)
+
+
 def image_url(pano_id, heading, fov, pitch=0):
     return url(
         "https://streetviewpixels-pa.googleapis.com/v1/thumbnail",
@@ -98,9 +113,9 @@ def image_url(pano_id, heading, fov, pitch=0):
         cb_client="maps_sv.tactile",
         w=1024,
         h=576,
-        yaw=heading,
-        pitch=pitch,
-        thumbfov=fov,
+        yaw=validate_angle(heading, "heading"),
+        pitch=validate_angle(pitch, "pitch"),
+        thumbfov=validate_fov(fov),
     )
 
 

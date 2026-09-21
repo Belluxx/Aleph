@@ -1,12 +1,27 @@
 import json
 import unittest
+from urllib.parse import parse_qs, urlsplit
 
-from src import geo, streetview
+from src import capture, geo, streetview
 from src.common import MissingImagery
 from tests.fixtures import metadata
 
 
 class StreetViewTests(unittest.TestCase):
+    def test_fov_bounds_and_integer_serialization(self):
+        for value in (5, 75.0, 175):
+            with self.subTest(value=value):
+                options = capture.settings(dict(fov=value))
+                self.assertIs(type(options["fov"]), int)
+                query = parse_qs(urlsplit(streetview.image_url("panorama_0001", 0, value)).query)
+                self.assertEqual(query["thumbfov"], [str(int(value))])
+        for value in (4, 176, 82.5, float("nan"), float("inf"), True, "75"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "fov"):
+                    capture.settings(dict(fov=value))
+                with self.assertRaisesRegex(ValueError, "fov"):
+                    streetview.image_url("panorama_0001", 0, value)
+
     def test_coverage_distinguishes_empty_tiles_from_unreadable_responses(self):
         row = [[[2, "panorama_0001"], None, [[None, None, 12, 34]]]]
         data = b")]}'\n" + json.dumps([None, [None, [row, [[1]], [[[3, "user_photo"]]]]]]).encode()

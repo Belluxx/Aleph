@@ -110,12 +110,13 @@ class QueryTests(unittest.TestCase):
                 values = parse_qs(urlsplit(address).query)
                 self.assertAlmostEqual(float(values["yaw"][0]), 90, places=3)
                 self.assertEqual(values["pitch"], ["10.0"])
+                self.assertEqual(values["thumbfov"], ["175"])
                 return image_bytes((1024, 576), "blue")
             self.fail(f"Unexpected request: {address}")
 
         self.get.side_effect = response
         status, result = self.invoke("streetview", "--at", "0", "0", "--look-at", "0", "1",
-                                     "--pitch", "10", "-o", str(self.directory))
+                                     "--pitch", "10", "--fov", "175", "-o", str(self.directory))
         self.assertEqual(status, 0)
         photo = result["photos"][0]
         self.assertEqual(photo["pano_id"], "panorama_0001")
@@ -195,6 +196,9 @@ class QueryTests(unittest.TestCase):
             ["streetview", "--street", "Test", "--stops", "0"],
             ["streetview", "--at", "0", "0", "--radius", "0"],
             ["streetview", "--at", "0", "0", "--radius", "inf"],
+            ["streetview", "--at", "0", "0", "--pitch", "nan"],
+            ["streetview", "--at", "0", "0", "--heading", "inf"],
+            ["streetview", "--at", "0", "0", "--pitch", "1e39"],
             ["satellite", "--at", "0", "0", "--size", "0"],
             ["satellite", "--at", "0", "0", "--size", "nan"],
             ["satellite", "--tile", "19/1"],
@@ -208,6 +212,23 @@ class QueryTests(unittest.TestCase):
                 self.assertEqual(status, 2, result)
                 self.assertEqual(result["error"]["code"], "invalid_arguments")
         self.get.assert_not_called()
+
+    def test_streetview_passes_extended_angles_through(self):
+        def response(address, **kwargs):
+            if "/photometa/v1" in address:
+                return metadata()
+            values = parse_qs(urlsplit(address).query)
+            self.assertEqual(values["yaw"], ["-720.5"])
+            self.assertEqual(values["pitch"], ["100.25"])
+            return image_bytes((1024, 576), "blue")
+
+        self.get.side_effect = response
+        status, result = self.invoke("streetview", "--pano-id", "panorama_0001",
+                                     "--heading", "-720.5", "--pitch", "100.25",
+                                     "-o", str(self.directory))
+        self.assertEqual(status, 0, result)
+        self.assertEqual(result["photos"][0]["heading"], -720.5)
+        self.assertEqual(result["photos"][0]["pitch"], 100.25)
 
 
 class RouteTests(unittest.TestCase):

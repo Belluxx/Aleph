@@ -36,9 +36,9 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
                   street=None, match=None, endpoint=places.GEOCODER, route=None,
                   reverse=False, stops=10, view="forward", heading=0, look_at=None,
                   pitch=0, fov=75, radius=50, image_format="jpg"):
-    places.number(heading, "heading", 0, 360)
-    places.number(pitch, "pitch", -90, 90)
-    places.number(fov, "fov", 20, 120)
+    streetview.validate_angle(heading, "heading")
+    streetview.validate_angle(pitch, "pitch")
+    fov = streetview.validate_fov(fov)
     places.positive(radius, "radius")
     if type(stops) is not int or stops < 1:
         raise ValueError("stops must be a positive whole number.")
@@ -90,7 +90,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
                 if "lat" in sample and distance(actual, (sample["lat"], sample["lon"])) > 1:
                     raise MissingImagery("Panorama position changed; retry with --refresh.")
                 for direction in directions if street else (None,):
-                    angle = (sample["heading"] + offsets[direction]) % 360 if street else heading % 360
+                    angle = (sample["heading"] + offsets[direction]) % 360 if street else heading
                     if look_at is not None:
                         angle = bearing(actual, look_at)
                     address = streetview.image_url(sample["pano_id"], angle, fov, pitch)
