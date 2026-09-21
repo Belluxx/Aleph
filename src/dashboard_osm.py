@@ -3,9 +3,9 @@
 import math
 import re
 from collections import defaultdict
+from xml.etree import ElementTree as ET
 
 from .geo import feature, ring_contains, signed_area
-from .osm import objects
 
 DISPLAY_TAGS = {"building", "landuse", "natural", "water", "highway", "waterway"}
 TAGS = DISPLAY_TAGS | {"name", "height", "building:levels", "min_height", "type"}
@@ -63,6 +63,22 @@ def properties(tags, polygon):
         if "name" in tags:
             result["name"] = tags["name"]
     return result
+
+
+def objects(path):
+    """Stream complete OSM elements without retaining the XML tree."""
+    try:
+        with path.open("rb") as stream:
+            parser = ET.iterparse(stream, events=("start", "end"))
+            _, root = next(parser)
+            if root.tag != "osm":
+                raise ValueError("OSM file contains no osm root.")
+            for event, obj in parser:
+                if event == "end" and obj.tag in ("node", "way", "relation"):
+                    yield obj
+                    root.clear()
+    except (ET.ParseError, StopIteration) as error:
+        raise ValueError("OSM file contains invalid XML.") from error
 
 
 def read_osm(path):

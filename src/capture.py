@@ -43,7 +43,7 @@ DEFAULT_OPTIONS = dict(
 
 OSM_NOTES = {
     "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
-    "selection": "Bounding-box selection with complete ways. Relations retain their original member references, but members outside the extract are not downloaded recursively. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
+    "selection": "Bounding-box selection with complete ways and directly selected multipolygons, including outer boundaries and holes. Other relations retain their original references and may remain incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
     "terrain": "Float32 heights in meters, EPSG:3857. Original compressed blocks retained without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }

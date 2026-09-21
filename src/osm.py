@@ -5,13 +5,13 @@ import json
 from collections import defaultdict
 from contextlib import nullcontext
 from itertools import pairwise
-from xml.etree import ElementTree as ET
 
 from .common import APP_AGENT, RequestError, atomic_path, write_bytes
 from .geo import clip, extent, ring_contains, signed_area
-from .pbf import PBF, POI_KEYS
+from .pbf import PBF
 
 INDEX = "https://download.geofabrik.de/index-v1.json"
+POI_KEYS = ("amenity", "tourism", "shop", "leisure", "historic", "office")
 
 
 def polygons(geometry):
@@ -40,24 +40,6 @@ def covers(geometry, area):
 
 def region_size(feature):
     return sum(abs(signed_area(polygon[0])) for polygon in polygons(feature["geometry"]))
-
-
-def objects(path, cancel=lambda: None):
-    """Stream complete OSM elements without retaining the XML tree."""
-    try:
-        with path.open("rb") as stream:
-            parser = ET.iterparse(stream, events=("start", "end"))
-            _, root = next(parser)
-            if root.tag != "osm":
-                raise ValueError("OSM file contains no osm root.")
-            for index, (event, obj) in enumerate(parser):
-                if index % 65536 == 0:
-                    cancel()
-                if event == "end" and obj.tag in ("node", "way", "relation"):
-                    yield obj
-                    root.clear()
-    except (ET.ParseError, StopIteration) as error:
-        raise ValueError("OSM file contains invalid XML.") from error
 
 
 class Source:
@@ -101,13 +83,10 @@ class Source:
             self.regions[url] = path, dict(source_url=url, region=props["name"], osm_data_at=stamp or None)
         return self.regions[url]
 
-    def extract(self, source, area, output):
-        PBF(source, self.client.check_cancel).export(area, output)
-
     def export(self, area, output, progress):
         source, metadata = self.region(area, progress)
         progress("Extracting OSM map")
-        self.extract(source, area, output)
+        PBF(source, self.client.check_cancel).export(area, output)
         return metadata
 
     def data(self, area, *, poi=False, progress=lambda *args: None):
@@ -145,11 +124,7 @@ class Source:
             if not tags.get("highway") or not tags.get("name"):
                 raise RequestError("place_not_found", "The selected street is absent or unnamed in the Geofabrik snapshot.")
             name = tags["name"]
-            nodes, identities = set(), set()
-            for way in pbf.ways(name=name):
-                identities.add(way["id"])
-                nodes.update(way["nodes"])
-            ways = {w["id"]: w for w in pbf.read((nodes, identities, set()))}
+            ways = {way["id"]: way for way in pbf.ways(name=name)}
             by_node = defaultdict(list)
             for way in ways.values():
                 for node in way["nodes"]:
@@ -162,7 +137,8 @@ class Source:
                 connected.add(current)
                 for node in ways[current]["nodes"]:
                     pending.extend(by_node.pop(node, ()))
-            selected = [ways[i] for i in sorted(connected)]
+            nodes = {node for identity in connected for node in ways[identity]["nodes"]}
+            selected = pbf.read((nodes, connected, set()))
             expanded = extent([area[:2], area[2:]] + [p for w in selected for p in w["points"]])
             next_source, _ = self.region(expanded, progress)
             if next_source == source:

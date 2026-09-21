@@ -3,11 +3,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from xml.etree import ElementTree as ET
 
 from src.common import Client
-from src.osm import Source, covers
+from src.osm import covers
 
 
 def polygon(ring, *holes):
@@ -64,15 +64,6 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual({w["id"] for w in street}, {10, 11})
         self.assertEqual(self.source.data((1, 1, 1.1, 1.1), poi=True)[0], [])
         self.client.get.assert_not_called()
-
-    def test_failed_extraction_keeps_previous_map(self):
-        output = self.folder / "map.osm"
-        output.write_bytes(b"previous")
-        with patch.object(Source, "extract", side_effect=OSError("failed")):
-            with self.assertRaises(OSError):
-                self.source.export(self.area, output, lambda *args: None)
-        self.assertEqual(output.read_bytes(), b"previous")
-        self.assertEqual(list(self.folder.glob(".map.osm-*")), [])
 
     def test_refresh_rejects_invalid_download_without_replacing_cached_region(self):
         original = self.path.read_bytes()

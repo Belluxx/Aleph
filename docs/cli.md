@@ -20,9 +20,9 @@ alephgeo resolve --at 41.8902 12.4922 --json
 alephgeo resolve --at 41.8902 12.4922 --nearby --radius 100 --limit 10 --json
 ```
 
-Reverse lookup returns the nearest address or named feature. Nearby search returns POIs ordered by distance.
+Reverse lookup returns the nearest address or named place. Nearby search lists places by distance, using the center of buildings and other areas.
 
-Name lookup uses [Photon](https://github.com/komoot/photon). Set `ALEPH_GEOCODER_URL` or `--geocoder URL` to use another Photon server. Nearby POIs and street geometry use local Geofabrik extracts.
+Name lookup uses [Photon](https://github.com/komoot/photon). Set `ALEPH_GEOCODER_URL` or `--geocoder URL` to use another Photon server. Nearby places and streets use Geofabrik map data.
 
 ## Quick imagery
 
@@ -49,10 +49,10 @@ alephgeo streetview --street "Via del Corso, Rome" --stops 10 --view forward -o 
 
 For example, `--stops 10` requests ten positions along the street. Choose a viewing direction with `--view forward`, `backward`, `left`, or `right`; `both` takes left and right photos at each stop. Use `--reverse` to go in the opposite direction.
 
-If Aleph finds several places or street branches, choose from the returned options with `--match ID` or `--route N`, respectively.
+If several results match, use `--match ID` to pick a place or `--route N` to pick a street branch.
 
 > [!TIP]
-> Quick requests start immediately and cache imagery/geocoder responses for 24 hours. OSM roads, nearby POIs, and maps use Geofabrik regional downloads, processed locally by Aleph's standard-library PBF reader. These regional files are retained until explicitly refreshed; the first request may download hundreds of megabytes. Use `--refresh` to fetch fresh responses and regional files, or `--cache-dir PATH` to change the cache location (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
+> Images and Photon results are cached for 24 hours. Geofabrik files are kept until refreshed. Use `--refresh` to fetch new data or `--cache-dir PATH` to choose the cache folder (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
 
 ## Capture an area
 
@@ -64,6 +64,6 @@ alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --no-plan -o capt
 
 `--bbox` takes two opposite corners: `lat1 lon1 lat2 lon2`. All sources are included; use `--sources satellite osm` to download only satellite imagery, map data, and terrain.
 
-`capture create` and `capture resume` also accept `--cache-dir PATH` and `--refresh`. Geofabrik publishes daily snapshots; repeated captures reuse the regional file until you refresh it. Estimates do not include the first regional download. Map exports complete selected ways and multipolygons, including outer boundaries and holes that extend beyond the selection. Other relations retain their original references and may remain incomplete. Named-street routes are joined using OSM node IDs, and nearby ways/relations are represented by their bounding-box centers.
+`capture create` and `capture resume` also accept `--cache-dir PATH` and `--refresh`. Time estimates do not include the first Geofabrik download.
 
 `--no-plan` starts downloading without confirmation (not recommended, as it may take a lot of time). Omit it to review the estimate first, or use `--plan` to save a plan without downloading. See `alephgeo capture create --help` for resolution and spacing options.

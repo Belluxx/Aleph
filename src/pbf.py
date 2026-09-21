@@ -25,9 +25,7 @@ from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
 MAX_BLOB = 32 * 1024 * 1024
-KINDS = {1: "node", 2: "node", 3: "way", 4: "relation"}
 MEMBERS = ("node", "way", "relation")
-POI_KEYS = ("amenity", "tourism", "shop", "leisure", "historic", "office")
 SIGNED_SMALL = tuple((v >> 1) ^ -(v & 1) for v in range(128))
 SIGNED_BYTES = bytes(((v >> 1) ^ -(v & 1)) & 255 for v in range(256))
 MULTIBYTE = re.compile(rb"[\x80-\xff]")
@@ -188,6 +186,14 @@ def signed64(value):
     return value - (1 << 64) if value >= 1 << 63 else value
 
 
+def deltas(data):
+    """Separate the first absolute value so small deltas use the fast path."""
+    if not data:
+        return iter(())
+    first, offset = varint(data, 0)
+    return accumulate(chain((zigzag(first),), unpack(data[offset:], True)))
+
+
 def inflate(data):
     blob = dict(fields(data))
     if 1 in blob:
@@ -239,9 +245,9 @@ def columns(message):
 
 def dense(message):
     values = columns(message)
-    ids = list(accumulate(unpack(values.get(1, b""), True)))
-    lats = list(accumulate(unpack(values.get(8, b""), True)))
-    lons = list(accumulate(unpack(values.get(9, b""), True)))
+    ids = list(deltas(values.get(1, b"")))
+    lats = list(deltas(values.get(8, b"")))
+    lons = list(deltas(values.get(9, b"")))
     if not len(ids) == len(lats) == len(lons):
         raise ValueError("Mismatched dense PBF coordinate columns.")
     return values, ids, lats, lons
@@ -252,8 +258,6 @@ def scan_nodes(task):
     values, groups = block(path, entry)
     gran = values.get(17, 100)
     lat_offset, lon_offset = signed64(values.get(19, 0)), signed64(values.get(20, 0))
-    if gran <= 0:
-        raise ValueError("Invalid PBF coordinate granularity.")
     if area is not None:
         south, west, north, east = area
         south, north = math.ceil((south * 1e9 - lat_offset) / gran), math.floor((north * 1e9 - lat_offset) / gran)
@@ -262,12 +266,12 @@ def scan_nodes(task):
     coordinates = (array("q"), array("q")) if retain else None
     for group in groups:
         for kind, message in fields(group):
-            if kind not in KINDS:
+            if kind not in (1, 2, 3, 4):
                 raise ValueError("Unsupported OSM primitive in PBF snapshot.")
             kinds |= 1 << kind
             if kind == 2:
                 if area is None:
-                    ids = list(accumulate(unpack(columns(message).get(1, b""), True)))
+                    ids = list(deltas(columns(message).get(1, b"")))
                 else:
                     _, ids, lats, lons = dense(message)
             elif kind == 1:
@@ -325,13 +329,6 @@ def way_references(message):
     return refs
 
 
-def references(data):
-    if not data:
-        return iter(())
-    first, offset = varint(data, 0)
-    return accumulate(chain((zigzag(first),), unpack(data[offset:], True)))
-
-
 def scan_ways(task):
     """Select spatial ways or requested member IDs and record the block's ID range."""
     path, entry, xml, wanted = task
@@ -350,9 +347,9 @@ def scan_ways(task):
                     if identity not in wanted:
                         continue
                 packed = way_references(message)
-                if wanted is not None or not _SPATIAL.isdisjoint(references(packed)):
+                if wanted is not None or not _SPATIAL.isdisjoint(deltas(packed)):
                     row = columns(message)
-                    refs = list(references(packed))
+                    refs = list(deltas(packed))
                     if strings is None:
                         strings = StringTable(values[1])
                     item = dict(type="way", id=row[1], nodes=refs, tags=tags(row, strings),
@@ -416,13 +413,16 @@ def info(values, strings, date_gran):
     return attrs
 
 
+def xml_attrs(attrs):
+    # Metadata values other than user names are generated numbers/ISO dates.
+    return "".join(
+        f' {key}={quoted(str(value))}' if key == "user" else f' {key}="{value}"'
+        for key, value in attrs.items())
+
+
 def xml_object(item):
     kind = item["type"]
-    # IDs, coordinates and metadata values are generated numbers/ISO dates.
-    # Only user names, tags and member roles need XML escaping.
-    attributes = f'id="{item["id"]}"' + "".join(
-        f' {key}={quoted(str(value))}' if key == "user" else f' {key}="{value}"'
-        for key, value in item.get("attrs", {}).items())
+    attributes = f'id="{item["id"]}"' + xml_attrs(item.get("attrs", {}))
     children = []
     if kind == "node":
         lat, lon = (f"{item[key]:.9f}".rstrip("0").rstrip(".") for key in ("lat", "lon"))
@@ -463,7 +463,7 @@ def read_nodes(task):
                     node, ids, lats, lons = dense(message)
                 else:
                     node = columns(message)
-                    ids = list(accumulate(unpack(node.get(1, b""), True)))
+                    ids = list(deltas(node.get(1, b"")))
                     lats, lons = [0] * len(ids), [0] * len(ids)
                 if len(wanted) * 8 < len(ids):
                     selected = sorted(i for identity in wanted
@@ -495,7 +495,7 @@ def read_nodes(task):
                                 if not data[offset:].strip(b"\0"):
                                     metadata[key] = [zigzag(first)] * (len(data) - offset + 1)
                                 else:
-                                    metadata[key] = list(accumulate(unpack(data, True)))
+                                    metadata[key] = list(deltas(data))
                             else:
                                 metadata[key] = unpack(data)
                             if len(metadata[key]) != len(ids):
@@ -503,8 +503,7 @@ def read_nodes(task):
                 if mode == "xml":
                     extra = {k: v for k, v in metadata.items() if k not in (1, 2)}
                     simple = 1 in metadata and 2 in metadata and all(v.count(v[0]) == len(v) for v in extra.values())
-                    suffix = "".join(f' {k}={quoted(str(v))}' for k, v in
-                                     info({k: v[0] for k, v in extra.items()}, strings, date_gran).items()) if simple else ""
+                    suffix = xml_attrs(info({k: v[0] for k, v in extra.items()}, strings, date_gran)) if simple else ""
                     precision = 7 if gran % 100 == lat_offset % 100 == lon_offset % 100 == 0 else 9
                     for i in selected:
                         lat, lon = (lat_offset + gran * lats[i]) / 1e9, (lon_offset + gran * lons[i]) / 1e9
@@ -513,8 +512,7 @@ def read_nodes(task):
                         if simple:
                             attrs = f' version="{metadata[1][i]}" timestamp="{timestamp(metadata[2][i], date_gran)}"{suffix}'
                         else:
-                            attrs = "".join(f' {k}={quoted(str(v))}' for k, v in
-                                            info({k: v[i] for k, v in metadata.items()}, strings, date_gran).items())
+                            attrs = xml_attrs(info({k: v[i] for k, v in metadata.items()}, strings, date_gran))
                         head = f'<node id="{ids[i]}"{attrs} lat="{lat:.{precision}f}" lon="{lon:.{precision}f}"'
                         node_tags = tag_rows.get(i)
                         output.append(head + ">" + "".join(f'<tag k={quoted(k)} v={quoted(v)}/>'
@@ -634,7 +632,7 @@ class PBF:
             if name is not None and (properties.get("name") != name or not properties.get("highway")):
                 continue
             way = dict(type="way", id=row[1], tags=properties,
-                       nodes=list(accumulate(unpack(row.get(8, b""), True))),
+                       nodes=list(deltas(row.get(8, b""))),
                        attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
             if wanted is not None or name is not None:
                 self.selected_ways[way["id"]] = way
@@ -644,7 +642,7 @@ class PBF:
         rows = ((4, *self.selected_relations[i]) for i in sorted(wanted)) if (
             wanted is not None and wanted <= self.selected_relations.keys()) else self.raw((4,), wanted)
         for _, row, strings, date_gran in rows:
-            refs = list(accumulate(unpack(row.get(9, b""), True)))
+            refs = list(deltas(row.get(9, b"")))
             roles, kinds = unpack(row.get(8, b"")), unpack(row.get(10, b""))
             if not len(refs) == len(roles) == len(kinds):
                 raise ValueError("Mismatched PBF relation member columns.")
@@ -691,7 +689,7 @@ class PBF:
         for _, row, strings, date_gran in self.raw((4,)):
             identity = row[1]
             rows[identity] = row, strings, date_gran
-            refs = list(accumulate(unpack(row.get(9, b""), True)))
+            refs = list(deltas(row.get(9, b"")))
             kinds = unpack(row.get(10, b""))
             matched = False
             for kind, ref in zip(kinds, refs):
