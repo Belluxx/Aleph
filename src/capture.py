@@ -249,7 +249,8 @@ def capture_streets(stage, run, folder, client, progress):
                 viewpoint=f"{photo['lat']},{photo['lon']}",
                 heading=photo["heading"],
                 pitch=0,
-                fov=photo["fov"],
+                # Maps links support 10–100°, unlike the thumbnail endpoint.
+                fov=max(10, min(100, photo["fov"])),
                 pano=photo["pano_id"],
             )
         except MissingImagery as error:
