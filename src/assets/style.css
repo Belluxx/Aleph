@@ -159,6 +159,9 @@ progress::-moz-progress-bar { background: var(--accent); }
 progress:indeterminate { background: repeating-linear-gradient(135deg, var(--accent) 0 25%, var(--soft) 25% 50%); background-size: 16px 16px; animation: job-activity .8s linear infinite; }
 progress:indeterminate::-webkit-progress-bar { background: transparent; }
 progress:indeterminate::-moz-progress-bar { background: transparent; }
+.progress-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.progress-percent { min-width: 4ch; color: var(--muted); font: 9px var(--mono); text-align: right; }
+.progress-detail { color: var(--muted); font: 9px var(--mono); text-align: right; white-space: nowrap; }
 a { color: inherit; text-underline-offset: 3px; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
@@ -227,7 +230,6 @@ a { color: inherit; text-underline-offset: 3px; }
 .card-actions .icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .job-meter { grid-column: 1 / -1; display: grid; gap: 6px; }
 .job-error { border: 0; background: transparent; text-decoration: underline; text-underline-offset: 3px; }
-#job-detail { color: var(--muted); font: 9px var(--mono); text-align: right; white-space: nowrap; }
 
 /* Map controls */
 .map-area { position: relative; flex: 1; min-height: 0; isolation: isolate; background: var(--map-background); }

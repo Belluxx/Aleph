@@ -1,17 +1,14 @@
-"""Join the provider's Float32 GeoTIFFs by copying their compressed blocks.
-
-Download tiles separately, then copy their blocks into one final mosaic.
-The intentionally narrow reader accepts only the provider's expected source format.
-"""
+"""Join Float32 GeoTIFFs, copying 256-pixel blocks and splitting larger ones."""
 
 import math
 import struct
+import zlib
 
 from .common import atomic_path
 from .geo import MERCATOR_RADIUS
 
 TYPES = {1: "B", 2: "c", 3: "H", 4: "I", 5: "II", 11: "f", 12: "d"}
-COMPATIBLE = (258, 259, 262, 277, 284, 317, 322, 323, 339, 34735, 34736, 34737, 42113)
+COMPATIBLE = (258, 259, 262, 277, 284, 317, 339, 34735, 34736, 34737, 42113)
 TIFF_LIMIT = 2**32
 
 
@@ -37,11 +34,13 @@ class TIFF:
             size = struct.calcsize(self.order + TYPES[kind]) * length
             raw = entry[8 : 8 + size] if size <= 4 else self.read(location, size)
             self.tags[code] = kind, length, raw
-        required = {258: 32, 339: 3, 277: 1, 262: 1, 322: 256, 323: 256}
+        required = {258: 32, 339: 3, 277: 1, 262: 1}
         if any(self.value(key) != value for key, value in required.items()) or self.value(
             259
         ) not in (1, 8, 32946):
             raise ValueError("Expected tiled Float32 terrain.")
+        if (self.value(322), self.value(323)) not in ((256, 256), (512, 512)):
+            raise ValueError("Expected 256- or 512-pixel terrain blocks.")
         if self.value(274, 1) != 1 or self.value(284, 1) != 1 or self.value(317, 1) not in (1, 3):
             raise ValueError("Unsupported terrain layout.")
         if any(key not in self.tags for key in (33550, 33922, 34735, 42113, 324, 325)):
@@ -70,6 +69,41 @@ class TIFF:
 
     def value(self, code, default=None):
         return self.values(code)[0] if code in self.tags else default
+
+    def blocks(self):
+        """Yield four 256-pixel blocks, preserving the source pixel encoding."""
+        if self.value(322) == 256:
+            for offset, size in zip(self.values(324), self.values(325)):
+                yield self.read(offset, size)
+            return
+        data = self.read(self.value(324), self.value(325))
+        compressed = self.value(259) != 1
+        if compressed:
+            data = zlib.decompress(data)
+        if len(data) != 512 * 512 * 4:
+            raise ValueError("Invalid terrain block size.")
+        blocks = [bytearray() for _ in range(4)]
+        for y in range(512):
+            row = data[y * 2048:(y + 1) * 2048]
+            left, right = blocks[y // 256 * 2:y // 256 * 2 + 2]
+            if self.value(317, 1) == 3:
+                # Float prediction differences span four byte planes per row.
+                # Rebase only the first byte of each half-plane after splitting.
+                carry = 0
+                for plane in range(4):
+                    a = bytearray(row[plane * 512:plane * 512 + 256])
+                    b = bytearray(row[plane * 512 + 256:(plane + 1) * 512])
+                    a_sum, b_sum = sum(a), sum(b)
+                    a[0] = (a[0] + carry) & 255
+                    b[0] = (b[0] + a_sum) & 255
+                    carry = b_sum
+                    left.extend(a)
+                    right.extend(b)
+            else:
+                left.extend(row[:1024])
+                right.extend(row[1024:])
+        for block in blocks:
+            yield zlib.compress(block) if compressed else block
 
 
 def header(tags, order):
@@ -110,14 +144,15 @@ def validate(source, tile):
     ):
         raise ValueError("Terrain georeferencing does not match the download grid.")
     offsets, sizes = source.values(324), source.values(325)
-    if len(offsets) != 4 or len(sizes) != 4:
+    count = (512 // source.value(322)) ** 2
+    if len(offsets) != count or len(sizes) != count:
         raise ValueError("Invalid terrain block directory.")
     if any(not offset or not size or offset + size > source.size for offset, size in zip(offsets, sizes)):
         raise ValueError("Missing or truncated saved terrain block.")
 
 
 def merge(path, folder, results, grid, progress):
-    """One source file open at a time; each compressed block is copied once."""
+    """One source file open at a time; usual 256-pixel blocks are copied as-is."""
     columns, rows = grid["columns"], grid["rows"]
     if len(results) != columns * rows:
         raise ValueError("Download all terrain tiles before building terrain.tif.")
@@ -143,6 +178,8 @@ def merge(path, folder, results, grid, progress):
                     scale, west, north = origin(source, tile)
                     set_tag(256, 4, [columns * 512])
                     set_tag(257, 4, [rows * 512])
+                    set_tag(322, 4, [256])
+                    set_tag(323, 4, [256])
                     set_tag(33550, 12, [scale, scale, 0])
                     set_tag(33922, 12, [0, 0, 0, west, north, 0])
                     set_tag(324, 4, offsets)
@@ -150,12 +187,13 @@ def merge(path, folder, results, grid, progress):
                     output.write(header(tags, order))
                 elif order != source.order or compatible != signature:
                     raise ValueError("Terrain tile formats differ.")
-                for j, (offset, size) in enumerate(zip(source.values(324), source.values(325))):
+                for j, data in enumerate(source.blocks()):
                     block = (row * 2 + j // 2) * columns * 2 + column * 2 + j % 2
+                    size = len(data)
                     if output.tell() + size >= TIFF_LIMIT:
                         raise ValueError("Terrain exceeds the 4 GiB TIFF limit. Use a smaller area or lower terrain zoom.")
                     offsets[block], sizes[block] = output.tell(), size
-                    output.write(source.read(offset, size))
+                    output.write(data)
             progress("Building terrain.tif", i + 1, len(results))
         set_tag(324, 4, offsets)
         set_tag(325, 4, sizes)

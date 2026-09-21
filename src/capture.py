@@ -44,7 +44,7 @@ DEFAULT_OPTIONS = dict(
 OSM_NOTES = {
     "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
     "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
-    "terrain": "Float32 heights in meters, EPSG:3857. Original compressed blocks retained without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
+    "terrain": "Float32 heights in meters, EPSG:3857, without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
 
@@ -387,7 +387,7 @@ def save_preview(run, folder):
         b"Photo headings are clockwise from north; left/right follow OSM node order.\n"
         b"GeoJSON files record paths, photo locations, or satellite patch footprints.\n"
         b"Satellite images are north-up Web Mercator, cropped to enclosing pixels.\n"
-        b"terrain.tif is Float32 meters in EPSG:3857, with original source blocks.\n"
+        b"terrain.tif is Float32 meters in EPSG:3857, without resampling.\n"
         b"Keep terrain/tiles/ for resume and offline export.\n"
         b"Filenames in the manifest and GeoJSON are relative to this run folder.\n"
         b"See manifest.json for settings, sources, imagery dates, and coverage notes.\n\n"

@@ -170,7 +170,7 @@ class Progress:
             self.line = ""
             self.width = 0
 
-    def __call__(self, phase, done=0, total=None):
+    def __call__(self, phase, done=0, total=None, unit=None):
         current = time.monotonic()
         if self.phase != phase:
             if not self.terminal:
@@ -183,6 +183,9 @@ class Progress:
         eta = "--:--"
         fraction = 0
         steps = f"{done:,}/?" if total is None else f"{done:,}/{total:,}"
+        if unit == "bytes":
+            target = "?" if total is None else f"{total / 1_000_000:.1f}"
+            steps = f"{done / 1_000_000:.1f} MB / {target} MB"
         if total is not None:
             fraction = min(1, done / total) if total else 1
             if done >= total:
@@ -199,7 +202,9 @@ class Progress:
                     else f"{minutes:02d}:{seconds:02d}"
                 )
 
-        prefix, suffix = f"{phase} [", f"] {steps}  - {eta}"
+        percent = f"{math.floor(fraction * 100)}%" if total is not None else "—%"
+        prefix = f"{phase} ["
+        suffix = f"] {percent}  {steps}" + ("" if unit == "bytes" else f"  - {eta}")
         columns = shutil.get_terminal_size().columns - 1
         width = min(24, max(1, columns - len(prefix) - len(suffix)))
         full, part = divmod(int(fraction * width * 8), 8)

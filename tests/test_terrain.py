@@ -47,6 +47,26 @@ class TerrainTests(unittest.TestCase):
                         block = zlib.compress(struct.pack(order + "f", height + 0.25) * (256 * 256))
                         self.assertEqual(data[offset:offset + size], block)
 
+    def test_mixed_block_sizes_preserve_every_float_pixel(self):
+        for order in ("<", ">"):
+            for predictor in (1, 3):
+                with self.subTest(order=order, predictor=predictor), tempfile.TemporaryDirectory() as directory:
+                    folder = Path(directory)
+                    results = []
+                    for i, block_size in enumerate((512, 256, 256, 512)):
+                        tile = dict(x=1 + i % 2, y=1 + i // 2, zoom=2, filename=f"{i}.tif")
+                        (folder / tile["filename"]).write_bytes(terrain_bytes(
+                            tile["x"], tile["y"], 2, order=order, block_size=block_size, predictor=predictor))
+                        results.append(tile)
+                    path = folder / "terrain.tif"
+                    terrain.merge(path, folder, results, dict(x0=1, y0=1, zoom=2, columns=2, rows=2), Mock())
+                    with Image.open(path) as mosaic:
+                        self.assertEqual((mosaic.tag_v2[322], mosaic.tag_v2[323]), (256, 256))
+                        for i, tile in enumerate(results):
+                            x, y = i % 2 * 512, i // 2 * 512
+                            with Image.open(folder / tile["filename"]) as source:
+                                self.assertEqual(mosaic.crop((x, y, x + 512, y + 512)).tobytes(), source.tobytes())
+
     def test_invalid_later_tile_leaves_previous_mosaic_intact(self):
         corruptions = {
             "wrong georeferencing": terrain_bytes(3, 1, 2),

@@ -135,7 +135,7 @@ function renderLibrary() {
   const fragment = document.createDocumentFragment();
   for (const run of state.captures) {
     const currentJob = visibleJob && state.job.run_id === run.id;
-    const status = currentJob ? state.job.state : run.state;
+    const status = state.job?.run_id === run.id ? state.job.state : run.state;
     const coordinates = center(run.bounds).map((v) => v.toFixed(5)).join(", ");
     if (term && !currentJob && !`${run.id} ${date(run.started_at)} ${coordinates} ${status}`.toLowerCase().includes(term)) continue;
     const card = node("article", undefined, `capture-card${state.selected?.id === run.id ? " active" : ""}`);
@@ -150,7 +150,7 @@ function renderLibrary() {
     button.append(heading, node("div", coordinates, "card-coordinates"), sources);
     button.addEventListener("click", () => selectCapture(run.id).catch((error) => notice(error.message)));
     const available = {
-      resume: run.state !== "complete" || !run.exports_saved,
+      resume: status !== "complete",
       export: Object.values(run.layers).some((layer) => layer.done),
     };
     const actions = $("capture-actions").content.firstElementChild.cloneNode(true);
@@ -199,9 +199,14 @@ async function refreshLibrary(initial = false) {
   state.refreshing = true;
   try {
     const data = await api("/api/captures");
+    const changed = data.captures.length !== state.captures.length || data.captures.some((run, index) => {
+      const previous = state.captures[index];
+      return run.id !== previous.id || run.state !== previous.state || run.exports_saved !== previous.exports_saved;
+    });
     state.captures = data.captures;
     state.lastRefresh = Date.now();
-    renderLibrary();
+    // Keep the active progress bar attached so polling does not restart its animation.
+    if (!state.job?.active || changed) renderLibrary();
     if (initial && data.errors.length) notice(`${data.errors.length} capture folder(s) could not be read: ${data.errors[0].id}: ${data.errors[0].error}`);
     if (state.composing) return;
     if (initial && state.captures.length) await selectCapture(state.captures[0].id);
@@ -699,11 +704,8 @@ function renderCapturePanel() {
   $("start-capture").hidden = planning;
   if (planning) {
     const job = state.job;
-    $("planning-phase").textContent = job.total > 0 ? `${job.phase}: ${job.done.toLocaleString()} of ${job.total.toLocaleString()}` : job.phase;
-    if (job.total > 0) {
-      $("planning-meter").max = job.total;
-      $("planning-meter").value = job.done;
-    } else $("planning-meter").removeAttribute("value");
+    $("planning-phase").textContent = job.phase;
+    renderProgress("planning-meter", "planning-detail", job);
     $("stop-planning").disabled = !job.active || job.state === "stopping";
   }
   const sources = form.querySelectorAll('input[name="include"]:checked').length;
@@ -1023,26 +1025,37 @@ async function confirmCapture() {
   }
 }
 
+function renderProgress(meterId, detailId, job) {
+  const meter = $(meterId);
+  const measured = job.total > 0;
+  const done = job.done || 0;
+  const percent = measured ? `${Math.floor(Math.max(0, Math.min(100, done / job.total * 100)))}%` : "—%";
+  let detail = measured ? `${done.toLocaleString()} / ${job.total.toLocaleString()}` : "Working…";
+  if (job.unit === "bytes") {
+    const mb = (value) => (value / 1_000_000).toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
+    detail = `${mb(done)} MB / ${measured ? mb(job.total) : "—"} MB`;
+  }
+  if (measured) {
+    meter.max = job.total;
+    meter.value = done;
+  } else meter.removeAttribute("value");
+  $(`${meterId}-percent`).textContent = percent;
+  $(detailId).textContent = detail;
+  meter.setAttribute("aria-valuetext", measured ? `${percent}, ${detail}` : detail);
+}
+
 function renderJob(job) {
   const previous = state.job;
   state.job = job;
   const panel = $("job");
   const wasHidden = panel.hidden;
-  panel.hidden = job.kind === "plan" || job.state === "idle";
+  panel.hidden = job.kind === "plan" || job.state === "idle" || job.state === "complete";
   // Only announce changed phase text, not every polling response.
   const phase = job.phase;
   if ($("job-phase").textContent !== phase) $("job-phase").textContent = phase;
   $("job-phase").title = phase;
-  const measured = job.total > 0;
-  const done = job.state === "complete" ? job.total : (job.done || 0);
   $("job-meter").hidden = !job.active;
-  $("job-detail").textContent = measured ? `${done.toLocaleString()} / ${job.total.toLocaleString()}` : "Working…";
-  if (!measured && job.active) $("job-progress").removeAttribute("value");
-  else {
-    $("job-progress").max = job.total || 1;
-    $("job-progress").value = done || 0;
-  }
-  $("job-progress").setAttribute("aria-valuetext", measured ? `Current step: ${done.toLocaleString()} of ${job.total.toLocaleString()}` : "Working");
+  renderProgress("job-progress", "job-detail", job);
   $("stop-job").hidden = !job.active;
   $("stop-job").disabled = job.state === "stopping";
   const stopLabel = job.state === "stopping" ? "Stopping capture…" : "Stop capture";

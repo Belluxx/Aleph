@@ -62,8 +62,11 @@
       <section id="job" class="job" aria-label="Capture progress" hidden>
         <div class="job-summary" role="status" aria-atomic="true"><strong id="job-phase"></strong></div>
         <div id="job-meter" class="job-meter">
-          <progress id="job-progress" aria-labelledby="job-phase" aria-describedby="job-detail"></progress>
-          <span id="job-detail"></span>
+          <div class="progress-row">
+            <progress id="job-progress" aria-labelledby="job-phase" aria-describedby="job-detail"></progress>
+            <span id="job-progress-percent" class="progress-percent" aria-hidden="true"></span>
+          </div>
+          <span id="job-detail" class="progress-detail"></span>
         </div>
         <div class="job-actions">
           <button id="job-error" class="job-error" aria-label="Show capture error details" hidden>Details</button>
@@ -137,7 +140,11 @@
           <p id="form-error" class="form-error" role="alert" hidden></p>
           <section id="planning-progress" class="planning-progress" aria-label="Planning progress" hidden>
             <strong id="planning-phase" role="status"></strong>
-            <progress id="planning-meter" aria-labelledby="planning-phase"></progress>
+            <div class="progress-row">
+              <progress id="planning-meter" aria-labelledby="planning-phase" aria-describedby="planning-detail"></progress>
+              <span id="planning-meter-percent" class="progress-percent" aria-hidden="true"></span>
+            </div>
+            <span id="planning-detail" class="progress-detail"></span>
             <button id="stop-planning" type="button">Stop planning</button>
           </section>
           <p id="capture-readiness" class="capture-readiness">Select an area on the map to continue.</p>

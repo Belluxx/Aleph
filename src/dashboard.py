@@ -177,9 +177,9 @@ class Jobs:
             self.update(state="stopping", phase="Stopping planning" if self.status.get("kind") == "plan" else "Saving progress")
             raise KeyboardInterrupt()
 
-    def progress(self, phase, done=0, total=None):
+    def progress(self, phase, done=0, total=None, unit=None):
         self.cancel()
-        self.update(phase=phase, done=done, total=total)
+        self.update(phase=phase, done=done, total=total, unit=unit)
 
     def start(self, *, area=None, options=None, identity=None, plan_only=False, export_only=False,
               plan_id=None):
@@ -234,7 +234,7 @@ class Jobs:
                 capture.export(run, folder, self.progress)
             else:
                 capture.download(run, folder, client, self.progress)
-            self.update(state="complete", phase="Exports rebuilt" if export_only else "Finished")
+            self.update(state="complete", phase="Complete")
         except KeyboardInterrupt:
             self.update(state="stopped", phase="Stopped")
         except Exception as error:

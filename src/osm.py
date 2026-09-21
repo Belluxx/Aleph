@@ -75,10 +75,10 @@ class Source:
             refresh = self.client.refresh or not path.is_file()
             with (atomic_path(path) if refresh else nullcontext(path)) as local:
                 if refresh:
-                    label = f"Downloading Geofabrik {props['name']} (regional file)"
-                    progress(label)
+                    label = f"Downloading Geofabrik {props['name']}"
+                    progress(label, 0, None, "bytes")
                     self.client.get(url, destination=local, timeout=180, user_agent=APP_AGENT,
-                                    progress=lambda done, total: progress(label, done, total))
+                                    progress=lambda done, total: progress(label, done, total, "bytes"))
                 stamp = PBF(local, self.client.check_cancel).timestamp
             self.regions[url] = path, dict(source_url=url, region=props["name"], osm_data_at=stamp or None)
         return self.regions[url]

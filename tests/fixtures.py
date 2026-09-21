@@ -22,10 +22,23 @@ def metadata(pano_id="panorama_0001", lat=0, lon=0):
     ]]]).encode()
 
 
-def terrain_bytes(x, y, zoom, heights=(1.25, -10.5, 200.75, -9999), *, order="<", raster_type=1):
-    # Four independently compressed 256 x 256 Float32 blocks per provider tile.
-    blocks = [zlib.compress(struct.pack(order + "f", height) * (256 * 256))
-              for height in heights]
+def terrain_bytes(x, y, zoom, heights=(1.25, -10.5, 200.75, -9999), *, order="<", raster_type=1,
+                  block_size=256, predictor=1):
+    quarters = [struct.pack(order + "f", height) * 256 for height in heights]
+    raw_blocks = ([row * 256 for row in quarters] if block_size == 256 else
+                  [(quarters[0] + quarters[1]) * 256 + (quarters[2] + quarters[3]) * 256])
+    blocks = []
+    for raw in raw_blocks:
+        if predictor == 3:
+            # LibTIFF encodes the float predictor independently of our block splitter.
+            mode = "F;32F" if order == "<" else "F;32BF"
+            with Image.frombytes("F", (block_size, block_size), raw, "raw", mode) as image, BytesIO() as stream:
+                image.save(stream, format="TIFF", compression="tiff_adobe_deflate", tiffinfo={317: 3})
+                encoded = stream.getvalue()
+                with Image.open(stream) as saved:
+                    raw = b"".join(zlib.decompress(encoded[offset:offset + size])
+                                   for offset, size in zip(saved.tag_v2[273], saved.tag_v2[279]))
+        blocks.append(zlib.compress(raw))
     scale = 40075016.68557849 / (2**zoom * 512)
     shift = scale / 2 if raster_type == 2 else 0
     west = -20037508.342789244 + x * scale * 512 + shift
@@ -33,7 +46,8 @@ def terrain_bytes(x, y, zoom, heights=(1.25, -10.5, 200.75, -9999), *, order="<"
     tags = {
         256: (4, [512]), 257: (4, [512]), 258: (3, [32]), 259: (3, [8]),
         262: (3, [1]), 277: (3, [1]), 284: (3, [1]),
-        322: (4, [256]), 323: (4, [256]), 324: (4, [0] * 4),
+        317: (3, [predictor]),
+        322: (4, [block_size]), 323: (4, [block_size]), 324: (4, [0] * len(blocks)),
         325: (4, list(map(len, blocks))), 339: (3, [3]),
         33550: (12, [scale, scale, 0]),
         33922: (12, [0, 0, 0, west, north, 0]),
@@ -46,10 +60,10 @@ def terrain_bytes(x, y, zoom, heights=(1.25, -10.5, 200.75, -9999), *, order="<"
     offset_location = None
     for code, (kind, values) in sorted(tags.items()):
         raw = values if kind == 2 else struct.pack(order + {3: "H", 4: "I", 12: "d"}[kind] * len(values), *values)
+        if code == 324:
+            offset_location = payload_start + len(payload) if len(raw) > 4 else 10 + len(entries) + 8
         if len(raw) > 4:
             location = payload_start + len(payload)
-            if code == 324:
-                offset_location = location
             payload.extend(raw)
             raw = struct.pack(order + "I", location)
         entries.extend(struct.pack(order + "HHI", code, kind, len(values)) + raw.ljust(4, b"\0"))
@@ -59,5 +73,5 @@ def terrain_bytes(x, y, zoom, heights=(1.25, -10.5, 200.75, -9999), *, order="<"
     for block in blocks:
         offsets.append(len(data))
         data.extend(block)
-    struct.pack_into(order + "4I", data, offset_location, *offsets)
+    struct.pack_into(order + "I" * len(offsets), data, offset_location, *offsets)
     return bytes(data)
