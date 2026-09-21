@@ -1,6 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1040" height="260" viewBox="36 77 1040 260" fill="none" role="img" aria-labelledby="title desc">
   <title id="title">Aleph</title>
-  <desc id="desc">A long charcoal pill with hand-drawn ivory map lines and a red ink river on the left, beside the ivory Aleph wordmark.</desc>
+  <desc id="desc">A long pill with hand-drawn map lines and a red ink river beside the Aleph wordmark. Colors adapt to light and dark themes.</desc>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .aleph-paper { fill: #1B1B18; }
+      .aleph-lines { stroke: #F8F4E9; }
+      .aleph-wordmark { fill: #FCF8F1; }
+    }
+  </style>
   <defs>
     <clipPath id="banner-pill">
       <rect x="36" y="77" width="1040" height="260" rx="130"/>
@@ -13,10 +20,10 @@
     </filter>
   </defs>
   <g clip-path="url(#banner-pill)">
-    <rect x="36" y="77" width="1040" height="260" fill="#1B1B18"/>
+    <rect x="36" y="77" width="1040" height="260" class="aleph-paper" fill="#F8F1E5"/>
     <!-- Broad pen wobble survives downscaling; fine grain adds a light ink edge. -->
     <g transform="translate(0 77) scale(1 1.12069) translate(0 -77)" filter="url(#banner-ink)">
-    <g stroke="#F8F4E9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <g class="aleph-lines" stroke="#34302B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
       <path d="M60 119C78 114 102 125 119 138C137 152 143 169 135 188C128 205 120 218 127 237C133 255 149 264 151 282C153 293 148 305 142 317"/>
       <path d="M34 169C48 159 65 162 80 168C100 176 102 189 98 204C93 220 89 231 97 248C105 266 129 278 122 297L120 301"/>
       <path d="M120 88C125 105 138 121 155 135C171 149 176 162 170 180C166 194 154 205 157 221C159 235 172 244 178 258C187 278 178 297 168 315"/>
@@ -51,7 +58,7 @@
 </g>
 </g>
 </defs>
-<g fill="rgb(98.823529%, 97.254902%, 94.509804%)" fill-opacity="1">
+<g class="aleph-wordmark" fill="#24211E" fill-opacity="1">
 <use xlink:href="#wordmark-glyph-0-0" x="2" y="92" />
 <use xlink:href="#wordmark-glyph-0-1" x="64.171875" y="92" />
 <use xlink:href="#wordmark-glyph-0-2" x="88.921875" y="92" />
