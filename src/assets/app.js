@@ -820,7 +820,7 @@ function setDrawMode(drawing) {
   state.drawing = drawing && Boolean(state.map);
   $("draw-area").setAttribute("aria-pressed", String(state.drawing));
   $("move-map").setAttribute("aria-pressed", String(!state.drawing));
-  $("draw-instruction").textContent = state.drawing ? "Drag to draw. Scroll to zoom." : "Drag to move. Select area to redraw.";
+  $("draw-instruction").textContent = state.drawing ? "Drag to draw. Scroll to zoom." : "Drag corners to resize. Drag the map to move.";
   $("coordinates").textContent = "";
   if (!state.map) return;
   for (const key of ["dragPan", "doubleClickZoom", "touchZoomRotate"]) state.map[key][state.drawing ? "disable" : "enable"]();
@@ -837,39 +837,68 @@ function cancelAreaDrag() {
   const canvas = state.map.getCanvas();
   if (canvas.hasPointerCapture(drag.pointerId)) canvas.releasePointerCapture(drag.pointerId);
   for (const [key, enabled] of Object.entries(drag.handlers)) state.map[key][enabled ? "enable" : "disable"]();
+  canvas.style.cursor = state.drawing ? "crosshair" : "grab";
   $("draw-measure").hidden = true;
   setSelection(state.draftBounds);
 }
 
 function initializeAreaDrawing(map) {
   const canvas = map.getCanvas();
+  const editable = () => state.composing && !state.submitting && !state.pendingPlan && !state.plan;
   const point = (event) => {
     const rect = canvas.getBoundingClientRect();
     return [Math.max(0, Math.min(rect.width, event.clientX - rect.left)), Math.max(0, Math.min(rect.height, event.clientY - rect.top))];
   };
+  const cornerAt = (position, pointerType) => {
+    if (!state.draftBounds) return null;
+    const corners = rectangle(state.draftBounds).geometry.coordinates[0].slice(0, 4);
+    let nearest = null;
+    let distance = pointerType === "touch" ? 22 : 12;
+    corners.forEach((coordinates, index) => {
+      const projected = map.project(coordinates);
+      const delta = Math.hypot(projected.x - position[0], projected.y - position[1]);
+      if (delta < distance) {
+        distance = delta;
+        nearest = {anchor: corners[(index + 2) % 4], position: projected,
+          cursor: index % 2 ? "nwse-resize" : "nesw-resize"};
+      }
+    });
+    return nearest;
+  };
+  const endpoint = (event) => point(event).map((value, index) => value + state.drag.offset[index]);
   const bounds = (end) => {
-    const start = map.unproject(state.drag.start);
+    const [lng, lat] = state.drag.anchor;
     const finish = map.unproject(end);
-    return normalizedBounds([start.lat, start.lng, finish.lat, finish.lng].map((value, index) => {
+    return normalizedBounds([lat, lng, finish.lat, finish.lng].map((value, index) => {
       const limit = index % 2 ? 180 : maxDrawLatitude;
       return Math.max(-limit, Math.min(limit, value));
     }));
   };
   canvas.addEventListener("pointerdown", (event) => {
-    if (!state.composing || !state.drawing || state.submitting || state.pendingPlan || state.drag || event.button !== 0 || !event.isPrimary) return;
+    if (!editable() || state.drag || event.button !== 0 || !event.isPrimary) return;
+    const start = point(event);
+    const corner = cornerAt(start, event.pointerType);
+    if (!corner && !state.drawing) return;
     event.preventDefault();
     map.stop();
     canvas.focus({preventScroll: true});
-    state.drag = {pointerId: event.pointerId, start: point(event),
-      handlers: Object.fromEntries(["keyboard", "scrollZoom"].map((key) => [key, map[key].isEnabled()]))};
-    map.keyboard.disable();
-    map.scrollZoom.disable();
+    const origin = map.unproject(start);
+    state.drag = {pointerId: event.pointerId, start, resizing: Boolean(corner),
+      anchor: corner ? corner.anchor : [origin.lng, origin.lat],
+      offset: corner ? [corner.position.x - start[0], corner.position.y - start[1]] : [0, 0],
+      handlers: Object.fromEntries(mapHandlers.map((key) => [key, map[key].isEnabled()]))};
+    for (const key of mapHandlers) map[key].disable();
+    canvas.style.cursor = corner ? corner.cursor : "crosshair";
     canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", (event) => {
-    if (!state.drag || event.pointerId !== state.drag.pointerId) return;
+    if (!state.drag) {
+      if (state.composing) canvas.style.cursor = (editable() && cornerAt(point(event), event.pointerType)?.cursor) || (state.drawing ? "crosshair" : "grab");
+      return;
+    }
+    if (event.pointerId !== state.drag.pointerId) return;
     event.preventDefault();
-    const end = point(event);
+    const end = endpoint(event);
     const area = bounds(end);
     setSelection(area);
     const size = areaMetrics(area);
@@ -882,10 +911,10 @@ function initializeAreaDrawing(map) {
   canvas.addEventListener("pointerup", (event) => {
     if (!state.drag || event.pointerId !== state.drag.pointerId) return;
     event.preventDefault();
-    const end = point(event);
+    const end = endpoint(event);
     const area = bounds(end);
     const [x, y] = state.drag.start;
-    const tooSmall = Math.abs(end[0] - x) < 6 || Math.abs(end[1] - y) < 6;
+    const tooSmall = !state.drag.resizing && (Math.abs(end[0] - x) < 6 || Math.abs(end[1] - y) < 6);
     cancelAreaDrag();
     const error = boundsError(area);
     if (tooSmall || error) {
@@ -893,6 +922,9 @@ function initializeAreaDrawing(map) {
       return;
     }
     if (selectArea(area)) setDrawMode(false);
+  });
+  canvas.addEventListener("pointerleave", () => {
+    if (state.composing && !state.drag) canvas.style.cursor = state.drawing ? "crosshair" : "grab";
   });
   for (const type of ["pointercancel", "lostpointercapture"]) canvas.addEventListener(type, (event) => {
     if (event.pointerId === state.drag?.pointerId) cancelAreaDrag();
