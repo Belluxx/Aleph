@@ -4,7 +4,9 @@ import argparse
 import json
 import math
 import os
+import shutil
 import sys
+import textwrap
 from pathlib import Path
 
 from src import capture, places, quick
@@ -232,17 +234,74 @@ def query(args, progress):
     return result
 
 
+def rows(headers, values, stream):
+    """Align identifiers and wrap descriptions without dropping choices."""
+    values = [headers, *values]
+    width = max(len(str(key)) for key, _ in values)
+    columns = min(100, shutil.get_terminal_size().columns)
+    for key, description in values:
+        prefix = f"  {key:<{width}}  "
+        print(textwrap.fill(" ".join(description.split()), width=max(columns, width + 24),
+                            initial_indent=prefix, subsequent_indent=" " * len(prefix)), file=stream)
+
+
+def coordinates(point):
+    return f"{point[0]:.5f}, {point[1]:.5f}"
+
+
+def place_rows(items, stream, *, locations=False):
+    values = []
+    for item in items:
+        name = item.get("label") or item.get("name") or "Unnamed place"
+        categories = [item["category"]] if item.get("category") else item.get("categories", [])
+        kind = ", ".join(category.split(":", 1)[-1].replace("_", " ") for category in categories)
+        description = name + (f" ({kind})" if kind else "")
+        if locations:
+            description += f" · {coordinates((item['lat'], item['lon']))}"
+            if "distance_m" in item:
+                description += f" · {item['distance_m']:.0f} m away"
+        values.append((item["id"], description))
+    rows(("ID", "PLACE"), values, stream)
+
+
+def error_details(code, details):
+    candidates = details.get("candidates", [])
+    if code == "ambiguous_place" and candidates:
+        place_rows(candidates, sys.stderr)
+    elif code == "ambiguous_route" and candidates:
+        rows(("ROUTE", "SECTION"), [
+            (item["route"], f"{item['length_m']:.0f} m · {coordinates(item['start'])} → "
+             f"{coordinates(item['end'])}" + (" (loop)" if item["closed"] else ""))
+            for item in candidates
+        ], sys.stderr)
+    if details.get("gaps"):
+        count = len(details["gaps"])
+        print(f"  Missing coverage at {count} {'stop' if count == 1 else 'stops'}.", file=sys.stderr)
+    if details.get("folder"):
+        print(f"Saved files: {details['folder']}", file=sys.stderr)
+
+
 def emit(result, as_json):
     if as_json:
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
     elif result.get("folder"):
-        print(result["folder"])
+        if result["command"] == "satellite":
+            print(f"Saved satellite image · {result['width']} × {result['height']} px")
+            print(result["path"])
+        elif result["command"] == "streetview":
+            count = len(result["photos"])
+            print(f"Saved {count} {'photo' if count == 1 else 'photos'}"
+                  f" · {result['saved_stops']}/{result['requested_stops']} stops")
+            print(result["photos"][0]["path"] if count == 1 else result["folder"])
+            if result["status"] == "partial":
+                print(f"Missing stops: see {Path(result['folder']) / 'result.json'}", file=sys.stderr)
+        else:
+            label = "Capture exported" if result.get("action") == "export" else f"Capture {result['status']}"
+            print(f"{label}\n{result['folder']}")
     elif "results" in result:
-        for item in result["results"]:
-            separation = f"  {item['distance_m']:.0f} m" if "distance_m" in item else ""
-            print(f"{item['id']}  {item.get('label') or item.get('name') or 'Unnamed POI'}"
-                  f"  ({item['lat']:.6f}, {item['lon']:.6f}){separation}")
-        if not result["results"]:
+        if result["results"]:
+            place_rows(result["results"], sys.stdout, locations=True)
+        else:
             print("No matches.", file=sys.stderr)
 
 
@@ -266,7 +325,7 @@ def main(argv=None):
         if args.command in ("resolve", "streetview", "satellite"):
             with Progress() as progress:
                 result = query(args, progress)
-            if result["status"] == "partial":
+            if as_json and result["status"] == "partial":
                 print(f"Saved {result['saved_stops']} of {result['requested_stops']} requested stops; see result.json for gaps.", file=sys.stderr)
             emit(result, as_json)
             return 0
@@ -335,15 +394,18 @@ def main(argv=None):
         if folder:
             details = dict(details, folder=str(folder))
         print(f"{style('alephgeo:', '31')} {error}", file=sys.stderr)
-        if folder:
+        if folder and as_json:
             print(
                 f"Saved run: {folder}\nUse 'capture resume' to retry, or 'capture export' to rebuild saved outputs.",
                 file=sys.stderr,
             )
         if as_json:
             emit(dict(status="error", error=dict(code=code, message=str(error), **details)), True)
-        elif details:
-            print(json.dumps(details, ensure_ascii=False, indent=2), file=sys.stderr)
+        else:
+            error_details(code, details)
+            if folder:
+                print("Use 'capture resume' to retry, or 'capture export' to rebuild saved outputs.",
+                      file=sys.stderr)
         return {"interrupted": 130, "invalid_arguments": 2}.get(code, 1)
 
 

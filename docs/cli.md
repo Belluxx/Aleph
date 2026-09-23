@@ -4,6 +4,8 @@
 
 Each operation has its own command. Run `alephgeo COMMAND --help` for its options. Coordinates are always `LAT LON`, distances are in meters, and headings are clockwise from north.
 
+Without `--json`, output is a compact summary: place choices show IDs, names, and types; route choices show lengths and endpoints; downloads show what was saved and its path. `resolve` also shows coordinates and nearby distances. Add `--json` for full metadata, source links, and error details.
+
 | Command | Purpose |
 | --- | --- |
 | `resolve` | Search for places, reverse geocode, or list nearby POIs |
