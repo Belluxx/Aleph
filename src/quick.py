@@ -25,15 +25,15 @@ def coverage(client, area, progress):
     return list(found.values())
 
 
-def location(client, *, at=None, place=None, match=None, endpoint=places.GEOCODER):
+def location(client, *, at=None, place=None, match=None, best_match=False, endpoint=places.GEOCODER):
     if at is not None:
         return places.point(at), None
-    selected = places.choose(client, place, match=match, endpoint=endpoint)
+    selected = places.choose(client, place, match=match, best_match=best_match, endpoint=endpoint)
     return (selected["lat"], selected["lon"]), selected
 
 
 def street_photos(client, output, progress, *, at=None, place=None, pano_id=None,
-                  street=None, match=None, endpoint=places.GEOCODER, route=None,
+                  street=None, match=None, best_match=False, endpoint=places.GEOCODER, route=None,
                   reverse=False, stops=10, view="forward", heading=0, look_at=None,
                   pitch=0, fov=75, radius=50, image_format="jpg"):
     streetview.validate_angle(heading, "heading")
@@ -47,7 +47,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     selected_place, selected_route = None, None
     gaps = []
     if street is not None:
-        selected_place = places.choose(client, street, match=match, street=True, endpoint=endpoint)
+        selected_place = places.choose(client, street, match=match, best_match=best_match, street=True, endpoint=endpoint)
         selected_route = routes.resolve(client, selected_place, route=route, reverse=reverse, progress=progress)
         points = selected_route["points"]
         south, west, north, east = extent(points)
@@ -62,7 +62,8 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
             raise ValueError("Invalid panorama ID.")
         samples = [dict(pano_id=pano_id, stop=1)]
     else:
-        requested, selected_place = location(client, at=at, place=place, match=match, endpoint=endpoint)
+        requested, selected_place = location(client, at=at, place=place, match=match,
+                                             best_match=best_match, endpoint=endpoint)
         views = coverage(client, places.around(requested, radius * 2), progress)
         nearest = min(views, key=lambda v: (distance(requested, (v["lat"], v["lon"])), v["pano_id"]), default=None)
         samples = []
@@ -124,7 +125,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     return result
 
 
-def satellite(client, output, progress, *, at=None, place=None, match=None,
+def satellite(client, output, progress, *, at=None, place=None, match=None, best_match=False,
               endpoint=places.GEOCODER, bbox=None, tile=None, size=200, zoom=19):
     if tile is not None:
         zoom, x, y = tile
@@ -139,7 +140,8 @@ def satellite(client, output, progress, *, at=None, place=None, match=None,
     elif bbox is not None:
         area = bounds(bbox)
     else:
-        center, selected_place = location(client, at=at, place=place, match=match, endpoint=endpoint)
+        center, selected_place = location(client, at=at, place=place, match=match,
+                                          best_match=best_match, endpoint=endpoint)
         area = places.around(center, size)
     g = grid(area, zoom)
     run = capture.plan(client, area, dict(include=["satellite"], satellite_zoom=zoom), progress)

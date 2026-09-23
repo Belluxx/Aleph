@@ -53,6 +53,10 @@ def parser():
         json_output(command)
 
     def locations(command):
+        selection = command.add_mutually_exclusive_group()
+        selection.add_argument("--match", metavar="TYPE/ID", help="choose an OSM ID returned for an ambiguous name")
+        selection.add_argument("--best-match", action="store_true",
+                               help="automatically select the geocoder's highest-ranked place")
         group = command.add_mutually_exclusive_group(required=True)
         group.add_argument("--at", nargs=2, type=float, metavar=("LAT", "LON"), help="coordinates")
         group.add_argument("--place", help="place name, including city or country")
@@ -72,7 +76,6 @@ def parser():
     source = locations(street)
     source.add_argument("--pano-id", help="exact panorama ID")
     source.add_argument("--street", help="named street to follow from end to end")
-    street.add_argument("--match", metavar="TYPE/ID", help="choose an OSM ID returned for an ambiguous name")
     street.add_argument("--stops", type=int, help="street positions (default: 10)")
     street.add_argument("--view", choices=("forward", "backward", "left", "right", "both"),
                         help="street orientation; both saves left and right (default: forward)")
@@ -92,7 +95,6 @@ def parser():
     source = locations(satellite)
     source.add_argument("--bbox", nargs=4, type=float, metavar=("S", "W", "N", "E"))
     source.add_argument("--tile", type=tile_coordinates, metavar="Z/X/Y")
-    satellite.add_argument("--match", metavar="TYPE/ID", help="choose an OSM ID returned for an ambiguous name")
     satellite.add_argument("--size", type=float, help="square width in meters around a point (default: 200)")
     satellite.add_argument("--zoom", type=int, help="satellite zoom, 1–21 (default: 19)")
     output(satellite)
@@ -207,9 +209,9 @@ def query(args, progress):
             mode = "search" if args.query is not None else "reverse"
         result = dict(command="resolve", mode=mode, status="complete", results=results)
     else:
-        if args.match and not (args.place or getattr(args, "street", None)):
-            raise ValueError("--match requires --place or --street.")
-        keys = ("at", "place", "match")
+        if (args.match or args.best_match) and not (args.place or getattr(args, "street", None)):
+            raise ValueError("--match and --best-match require --place or --street.")
+        keys = ("at", "place", "match", "best_match")
         if args.command == "streetview":
             if args.street is None and (args.stops is not None or args.view is not None
                                        or args.route is not None or args.reverse):
@@ -285,6 +287,8 @@ def emit(result, as_json):
     if as_json:
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
     elif result.get("folder"):
+        if place := result.get("place"):
+            print(f"Selected: {place['label']} ({place['id']})")
         if result["command"] == "satellite":
             print(f"Saved satellite image · {result['width']} × {result['height']} px")
             print(result["path"])

@@ -90,11 +90,11 @@ def geocode(client, *, query=None, at=None, limit=5, street=False, endpoint=GEOC
     return results
 
 
-def choose(client, query, *, match=None, street=False, endpoint=GEOCODER):
+def choose(client, query, *, match=None, best_match=False, street=False, endpoint=GEOCODER):
     candidates = geocode(client, query=query, street=street, endpoint=endpoint, limit=10)
     if not candidates:
         raise RequestError("place_not_found", "No matching place was found. Include a city or country.")
-    if match is None and len(candidates) == 1:
+    if match is None and (best_match or len(candidates) == 1):
         return candidates[0]
     for candidate in candidates:
         if candidate["id"] == match:

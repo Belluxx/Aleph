@@ -38,6 +38,14 @@ alephgeo satellite --tile 19/280337/194891 -o captures --json
 
 Both commands accept `--place "Colosseum, Rome"` instead of `--at LAT LON`. If several places match, they are listed. Repeat the command with `--match` followed by your chosen result's `id`.
 
+Use `--best-match` to automatically choose the first result in the geocoder's ranking:
+
+```sh
+alephgeo satellite --place "Colosseum, Rome" --best-match
+```
+
+The selected name and ID appear in plain-text output and in the JSON `place` field. `--best-match` also works with `streetview --place` and `streetview --street`. It cannot be combined with `--match`; street branches still require `--route N` when ambiguous.
+
 Street View finds the nearest panorama within 50 meters; change this with `--radius`. Results include the camera position, distance, viewing direction, and photo date when available.
 
 For satellite images, `--size 200` requests a square 200 meters wide around your location. Use `--bbox SOUTH WEST NORTH EAST` for a rectangle.
