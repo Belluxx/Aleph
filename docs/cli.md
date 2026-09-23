@@ -52,7 +52,7 @@ For example, `--stops 10` requests ten positions along the street. Choose a view
 If several results match, use `--match ID` to pick a place or `--route N` to pick a street branch.
 
 > [!TIP]
-> Images and Photon results are cached for 24 hours. Geofabrik files are kept until refreshed. Use `--refresh` to fetch new data or `--cache-dir PATH` to choose the cache folder (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
+> Images and Photon results are cached for one week. Geofabrik files are kept until refreshed. Use `--refresh` to fetch new data or `--cache-dir PATH` to choose the cache folder (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
 
 ## Capture an area
 

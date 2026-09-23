@@ -125,7 +125,7 @@ class Client:
 
 
 class CachedClient(Client):
-    """Cache successful quick-query responses for one day."""
+    """Cache successful quick-query responses for one week."""
 
     def __init__(self, directory, *, refresh=False):
         super().__init__(delay=1, cache_dir=directory, refresh=refresh)
@@ -137,7 +137,7 @@ class CachedClient(Client):
             return super().get(address, **kwargs)
         key = hashlib.sha256(address.encode()).hexdigest()
         path = self.cache_dir / key
-        if not self.refresh and path.is_file() and time.time() - path.stat().st_mtime < 86400:
+        if not self.refresh and path.is_file() and time.time() - path.stat().st_mtime < 7 * 24 * 60 * 60:
             self.hits += 1
             return path.read_bytes()
         result = super().get(address, **kwargs)
