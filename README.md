@@ -47,6 +47,10 @@ alephgeo dashboard --root captures
 
 The dashboard opens in your browser at `http://127.0.0.1:8100`. Your captures will be saved in `captures`.
 
+<p align="center">
+  <img src="resources/show_video.gif" alt="Aleph dashboard demo" width="640">
+</p>
+
 > [!TIP]  
 > Want to use it from the command line (or let an LLM use it)?
 > See the [CLI docs](docs/cli.md) for examples and details.
