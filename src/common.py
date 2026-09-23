@@ -127,8 +127,8 @@ class Client:
 class CachedClient(Client):
     """Cache successful quick-query responses for one week."""
 
-    def __init__(self, directory, *, refresh=False):
-        super().__init__(delay=1, cache_dir=directory, refresh=refresh)
+    def __init__(self, directory, *, delay=0, refresh=False):
+        super().__init__(delay=delay, cache_dir=directory, refresh=refresh)
         self.hits = 0
         self.misses = 0
 

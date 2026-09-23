@@ -45,6 +45,8 @@ def parser():
     def network(command):
         command.add_argument("--geocoder", default=os.environ.get("ALEPH_GEOCODER_URL", places.GEOCODER),
                              metavar="URL", help="Photon server URL (or ALEPH_GEOCODER_URL)")
+        command.add_argument("--delay", type=float, default=0,
+                             help="pause between requests in seconds (default: 0)")
         cache_options(command)
         json_output(command)
 
@@ -103,7 +105,8 @@ def parser():
     output(area)
     cache_options(area)
     json_output(area)
-    area.add_argument("--delay", type=float, help="pause between requests in seconds")
+    area.add_argument("--delay", type=float,
+                      help="pause between requests in seconds (default: 0)")
     planning = area.add_mutually_exclusive_group()
     planning.add_argument("--plan", action="store_true", help="save a plan without downloading imagery")
     no_plan_help = "start without the confirmation prompt"
@@ -184,7 +187,7 @@ def proceed():
 
 def query(args, progress):
     """Dispatch quick requests; reject conflicting options before network access."""
-    client = CachedClient(args.cache_dir, refresh=args.refresh)
+    client = CachedClient(args.cache_dir, delay=args.delay, refresh=args.refresh)
     if args.command == "resolve":
         if args.nearby and args.at is None:
             raise ValueError("--nearby requires --at LAT LON.")
