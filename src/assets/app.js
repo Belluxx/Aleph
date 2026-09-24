@@ -11,7 +11,8 @@ const state = {config: null, captures: [], selected: null, map: null, ready: nul
 const form = $("capture-form");
 const maxDrawLatitude = 85.0511287; // Remain inside Mercator bounds after rounding to seven decimals.
 const names = {streetview: "STREET VIEW", satellite: "SATELLITE", osm: "OSM + TERRAIN"};
-const resolutionNames = ["Extra low", "Very low", "Low", "Medium", "High", "Very high", "Extra high"];
+const resolutionNames = ["Lowest", "Very low", "Low", "Medium", "High", "Very high", "Maximum"];
+const sphereResolutionNames = ["Lowest", "Low", "Medium", "High", "Very high", "Maximum"];
 const layerGroups = {satellite: ["satellite"], buildings: ["buildings", "building-outlines"],
   roads: ["road-casing", "roads"], water: ["land", "water", "water-lines"], photos: ["stops"]};
 const contextRoadFilter = ["all", ["==", ["geometry-type"], "LineString"],
@@ -727,6 +728,10 @@ function renderCapturePanel() {
 }
 
 function renderResolution() {
+  const sphere = form.elements.sphere_zoom;
+  const sphereLabel = sphereResolutionNames[sphere.valueAsNumber];
+  $("sphere-resolution-value").value = sphereLabel;
+  sphere.setAttribute("aria-valuetext", sphereLabel);
   const input = form.elements.satellite_zoom;
   const label = resolutionNames[input.valueAsNumber - Number(input.min)];
   $("resolution-value").value = label;
@@ -975,7 +980,7 @@ function showPlan(plan) {
   if (!state.composing) return;
   state.plan = plan;
   const estimate = plan.estimate;
-  $("plan-duration").textContent = estimate.seconds === null ? "Download time depends on sphere resolution" : `About ${durationLabel(estimate.seconds)}`;
+  $("plan-duration").textContent = `About ${durationLabel(estimate.seconds)}`;
   const counts = $("plan-counts");
   counts.replaceChildren();
   const row = (label, value) => {
@@ -1122,6 +1127,7 @@ function bindEvents() {
   $("close-plan").addEventListener("click", () => closeCapture());
   $("edit-plan").addEventListener("click", editPlan);
   $("satellite-resolution").addEventListener("input", renderResolution);
+  $("sphere-zoom").addEventListener("input", renderResolution);
   form.addEventListener("change", renderCapturePanel);
   $("search").addEventListener("input", renderLibrary);
   $("refresh").addEventListener("click", () => refreshLibrary(true).catch((error) => notice(error.message)));

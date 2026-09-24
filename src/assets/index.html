@@ -106,23 +106,27 @@
               <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg>Satellite</h3>
               <div class="resolution-heading"><label for="satellite-resolution">Satellite resolution</label><output id="resolution-value" for="satellite-resolution"></output></div>
               <input id="satellite-resolution" class="resolution-slider" name="satellite_zoom" type="range" min="15" max="21" step="1">
-              <div class="resolution-scale" aria-hidden="true"><span>Low</span><span>High</span></div>
+              <div class="resolution-scale" aria-hidden="true"><span>Lowest</span><span>Maximum</span></div>
               <output id="satellite-patches" class="patch-estimate" for="satellite-resolution" aria-live="polite" hidden></output>
             </div>
             <div class="settings-group" data-source="streetview">
               <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="4"/></svg>Street View</h3>
               <div class="settings-grid">
-                <label>Capture type<select name="full_sphere"><option value="false">Left and right photos</option><option value="true">Full sphere (360°)</option></select></label>
+                <label>Capture type<select name="full_sphere"><option value="false">Left and right</option><option value="true">Full sphere (360°)</option></select></label>
                 <label>Photo spacing (m)<input name="step" type="number" min="0" step="any" required></label>
                 <label>Field of view (°)<input name="fov" type="number" min="5" max="175" step="1" required></label>
-                <label id="sphere-resolution" hidden>Sphere resolution<select name="sphere_zoom"><option value="0">0 — Lowest</option><option value="1">1 — Low</option><option value="2">2 — Medium</option><option value="3">3 — High</option><option value="4">4 — Very high</option><option value="5">5 — Maximum</option></select></label>
+              </div>
+              <div id="sphere-resolution" hidden>
+                <div class="resolution-heading"><label for="sphere-zoom">Sphere resolution</label><output id="sphere-resolution-value" for="sphere-zoom"></output></div>
+                <input id="sphere-zoom" class="resolution-slider" name="sphere_zoom" type="range" min="0" max="5" step="1" value="3">
+                <div class="resolution-scale" aria-hidden="true"><span>Lowest</span><span>Maximum</span></div>
               </div>
             </div>
           </fieldset>
           <details id="advanced-settings" class="settings">
             <summary>Advanced</summary>
             <div class="settings-group" data-source="satellite">
-              <h3 class="settings-divider">Satellite</h3>
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg>Satellite</h3>
               <div class="settings-grid">
                 <label>Tile format<select name="satellite_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
               </div>

@@ -339,6 +339,7 @@ a { color: inherit; text-underline-offset: 3px; }
 .resolution-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); }
 .resolution-heading output { color: var(--ink); font: 10px var(--mono); }
 .resolution-slider { display: block; width: 100%; margin: 8px 0 3px; }
+#sphere-resolution { margin-top: 16px; }
 .resolution-scale { display: flex; justify-content: space-between; font: 9px/1.4 var(--mono); color: var(--muted); }
 .patch-estimate { display: block; margin-top: 6px; color: var(--ink); font: 10px/1.4 var(--mono); text-align: center; }
 .settings-group:not([hidden]) + .settings-group:not([hidden]), .settings > .settings-group:not([hidden]) { margin-top: 22px; }

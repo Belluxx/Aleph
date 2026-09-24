@@ -166,7 +166,7 @@ class CaptureTests(unittest.TestCase):
         run = self.sphere_run()
         self.assertEqual(capture.total(run["stages"][0]), 1)
         self.assertEqual(capture.estimate(run)["streetview_stops"], 1)
-        self.assertIsNone(capture.estimate(run)["seconds"])
+        self.assertGreater(capture.estimate(run)["seconds"], 0)
         client = Mock()
         client.get.side_effect = [sphere_metadata(), sphere_tile("red"), sphere_tile("green"), KeyboardInterrupt()]
         with self.assertRaises(KeyboardInterrupt):

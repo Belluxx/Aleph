@@ -40,6 +40,11 @@ DEFAULT_OPTIONS = dict(
     delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14,
 )
 
+# Average connection speed / hardware timings, just to give an idea to the user, not precise
+REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.27, satellite_tile=0.25, terrain_tile=1.39)
+SPHERE_TILES = (1, 2, 8, 32, 128, 512)
+OSM_EXPORT_SECONDS = 10
+
 OSM_NOTES = {
     "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
     "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
@@ -137,22 +142,28 @@ def total(stage):
 
 
 def estimate(run):
-    """Estimate remaining downloads using observed download time with average internet connection"""
-    counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0,
+    """Estimate remaining work from measured request costs and typical sphere sizes.
+
+    Excludes planning, initial regional PBF downloads, and final merged exports.
+    Partly downloaded spheres are counted in full; their cached tiles may save time.
+    """
+    counts = dict(streetview_photos=0, streetview_stops=0, streetview_tiles=0, satellite_tiles=0,
                   terrain_tiles=0, osm_maps=0)
-    metadata_requests = 0
-    sphere_pending = False
+    metadata_requests = thumbnail_requests = 0
     for stage in run["stages"]:
         remaining = total(stage) - len(stage["results"])
         if stage["mode"] == "streetview":
             counts["streetview_photos"] = remaining
-            sphere_pending = bool(stage.get("full_sphere") and remaining)
             per_stop = 1 if stage.get("full_sphere") else 2
+            if stage.get("full_sphere"):
+                counts["streetview_tiles"] = remaining * SPHERE_TILES[run["options"]["sphere_zoom"]]
+            else:
+                thumbnail_requests = remaining
             samples = stage["samples"][len(stage["results"]) // per_stop:]
             counts["streetview_stops"] = len(samples)
             previous = None  # Metadata is fetched again when resuming a run.
             for sample in samples:
-                if sample["pano_id"] != previous:
+                if stage.get("full_sphere") or sample["pano_id"] != previous:
                     metadata_requests += 1
                     previous = sample["pano_id"]
         elif stage["mode"] == "satellite":
@@ -161,15 +172,13 @@ def estimate(run):
             counts["osm_maps"] = int(not any(item["filename"] == "map.osm"
                                              for item in stage["results"]))
             counts["terrain_tiles"] = remaining - counts["osm_maps"]
-    requests = (counts["streetview_photos"] + metadata_requests
-                + counts["satellite_tiles"] + counts["terrain_tiles"])
-    download_seconds = (counts["streetview_photos"] * 0.55
-                        + counts["satellite_tiles"] * 0.37
-                        + counts["terrain_tiles"] * 1.1 + counts["osm_maps"] * 30)
-    delay_seconds = max(0, requests - 1) * run["options"]["delay"]
-    # Native tile dimensions are learned during capture, so a sphere ETA is
-    # unavailable at planning time. Do not apply the two-thumbnail timings.
-    return dict(counts, seconds=None if sphere_pending else math.ceil(download_seconds + delay_seconds))
+    requests = dict(metadata=metadata_requests, photo=thumbnail_requests,
+                    sphere_tile=counts["streetview_tiles"], satellite_tile=counts["satellite_tiles"],
+                    terrain_tile=counts["terrain_tiles"])
+    download_seconds = sum(count * REQUEST_SECONDS[kind] for kind, count in requests.items())
+    download_seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
+    delay_seconds = max(0, sum(requests.values()) - 1) * run["options"]["delay"]
+    return dict(counts, seconds=math.ceil(download_seconds + delay_seconds))
 
 
 def photos(run, after=0):

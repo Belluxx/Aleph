@@ -40,9 +40,6 @@ def describe(run):
             maps = estimate["osm_maps"]
             message = f"{maps:,} OSM {'map' if maps == 1 else 'maps'} and {estimate['terrain_tiles']:,} terrain tiles"
         print(f"  {label:<15}{message}", file=sys.stderr)
-    if estimate["seconds"] is None:
-        print("  Download time depends on panorama tile counts; progress is shown during capture.", file=sys.stderr)
-        return
     minutes, seconds = divmod(estimate["seconds"], 60)
     hours, minutes = divmod(minutes, 60)
     duration = f"{hours} hr {minutes} min" if hours else f"{minutes} min {seconds} sec" if minutes else f"{seconds} sec"
