@@ -1,79 +1,103 @@
 # CLI guide
 
-[Back to the README](../README.md)
+[Install Aleph](../README.md#install)
 
-Each operation has its own command. Run `alephgeo COMMAND --help` for its options. Coordinates are always `LAT LON`, distances are in meters, and headings are clockwise from north.
-
-Without `--json`, output is a compact summary: place choices show IDs, names, and types; route choices show lengths and endpoints; downloads show what was saved and its path. `resolve` also shows coordinates and nearby distances. Add `--json` for full metadata, source links, and error details.
-
-| Command | Purpose |
-| --- | --- |
-| `resolve` | Search for places, reverse geocode, or list nearby POIs |
-| `streetview` | Save one view or an ordered sequence along a named street |
-| `satellite` | Save a satellite patch or an exact tile |
-| `capture` | Create, resume, or export an area capture |
-| `dashboard` | Open the visual interface |
-
-## Find a place
+## Download a photo or satellite image
 
 ```sh
-alephgeo resolve "Colosseum, Rome" --json
-alephgeo resolve --at 41.8902 12.4922 --json
-alephgeo resolve --at 41.8902 12.4922 --nearby --radius 100 --limit 10 --json
+# Street View near a named place
+alephgeo streetview --place "Colosseum, Rome" --best-match -o captures
+
+# A satellite image covering a 200 × 200 meter square
+alephgeo satellite --place "Colosseum, Rome" --best-match --size 200 -o captures
 ```
 
-Reverse lookup returns the nearest address or named place. Nearby search lists places by distance, using the center of buildings and other areas.
+`--best-match` picks the first search result. Omit it to see a list of matching places, then choose it with `--match TYPE/ID`.
 
-Name lookup uses [Photon](https://github.com/komoot/photon). Set `ALEPH_GEOCODER_URL` or `--geocoder URL` to use another Photon server. Nearby places and streets use Geofabrik map data.
+`-o captures` saves each download in the `captures` dir. Otherwise the results folders are created in the current directory.
 
-## Quick imagery
+## Use coordinates
+
+Coordinates are `LAT LON`; distances are in meters.
 
 ```sh
-alephgeo streetview --at 41.8902 12.4922 --heading 90 -o captures --json
-alephgeo streetview --at 41.8902 12.4922 --look-at 41.8903 12.4924 --json
-alephgeo streetview --pano-id PANORAMA_ID --pitch 10 --fov 75 --json
-alephgeo satellite --at 41.8902 12.4922 --size 200 --zoom 19 -o captures --json
-alephgeo satellite --tile 19/280337/194891 -o captures --json
+# Street View facing east (0 = north, 90 = east, 180 = south, 270 = west)
+alephgeo streetview --at 41.8902 12.4922 --heading 90 -o captures
+
+# Aim the camera at a specific point
+alephgeo streetview --at 41.8902 12.4922 --look-at 41.8903 12.4924 -o captures
+
+# Satellite image around a point
+alephgeo satellite --at 41.8902 12.4922 --size 500 -o captures
+
+# Satellite image of a rectangle: south west north east
+alephgeo satellite --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 ```
 
-Both commands accept `--place "Colosseum, Rome"` instead of `--at LAT LON`. If several places match, they are listed. Repeat the command with `--match` followed by your chosen result's `id`.
+Street View searches within 50 meters. Add `--radius 200` to search farther away if no panorama is found.
 
-Use `--best-match` to automatically choose the first result in the geocoder's ranking:
+## Find places
 
 ```sh
-alephgeo satellite --place "Colosseum, Rome" --best-match
+# Look up a name and its coordinates
+alephgeo resolve "Colosseum, Rome"
+
+# Find the address or place at these coordinates
+alephgeo resolve --at 41.8902 12.4922
+
+# List nearby points of interest
+alephgeo resolve --at 41.8902 12.4922 --nearby --radius 200
 ```
 
-The selected name and ID appear in plain-text output and in the JSON `place` field. `--best-match` also works with `streetview --place` and `streetview --street`. It cannot be combined with `--match`; street branches still require `--route N` when ambiguous.
-
-Street View finds the nearest panorama within 50 meters; change this with `--radius`. Results include the camera position, distance, viewing direction, and photo date when available.
-
-For satellite images, `--size 200` requests a square 200 meters wide around your location. Use `--bbox SOUTH WEST NORTH EAST` for a rectangle.
-
-## Follow a street
+## Take photos along a street
 
 ```sh
-alephgeo resolve "Via del Corso, Rome" --streets --json
-alephgeo streetview --street "Via del Corso, Rome" --stops 10 --view forward -o captures --json
+# Request photos at ten stops, looking forward along the street
+alephgeo streetview --street "Via del Corso, Rome" --best-match --stops 10 -o captures
+
+# Photograph both sides at each stop
+alephgeo streetview --street "Via del Corso, Rome" --best-match --stops 10 --view both -o captures
 ```
 
-For example, `--stops 10` requests ten positions along the street. Choose a viewing direction with `--view forward`, `backward`, `left`, or `right`; `both` takes left and right photos at each stop. Use `--reverse` to go in the opposite direction.
+`--view` accepts `forward`, `backward`, `left`, `right`, or `both`. Add `--reverse` to travel in the opposite direction. If the street has multiple branches, repeat with `--route N` using a returned route number. Stops without coverage are skipped.
 
-If several results match, use `--match ID` to pick a place or `--route N` to pick a street branch.
+## Download an area
 
-> [!TIP]
-> Images and Photon results are cached for one week. Geofabrik files are kept until refreshed. Use `--refresh` to fetch new data or `--cache-dir PATH` to choose the cache folder (default: `$XDG_CACHE_HOME/aleph` or `~/.cache/aleph`).
-
-## Capture an area
-
-Use the capture feature when you need to download a large piece of land. It supports many square kilometers of land.
+Capture all available data inside a rectangle (Street View, satellite imagery, OSM data, and terrain):
 
 ```sh
-alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --no-plan -o captures
+alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 ```
 
-`--bbox` takes two opposite corners: `lat1 lon1 lat2 lon2`. All sources are included; use `--sources satellite osm` to download only satellite imagery, map data, and terrain.
+The command shows an estimate and asks before downloading. Add `--no-plan` to skip the prompt, or `--plan` to save a plan for later.
 
-`capture create` and `capture resume` also accept `--cache-dir PATH` and `--refresh`. Time estimates do not include the first Geofabrik download.
+To download only map data and terrain:
 
-`--no-plan` starts downloading without confirmation (not recommended, as it may take a lot of time). Omit it to review the estimate first, or use `--plan` to save a plan without downloading. See `alephgeo capture create --help` for resolution and spacing options.
+```sh
+alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources osm -o captures
+```
+
+`--sources` accepts one or more of `streetview`, `satellite`, and `osm` (which includes terrain).
+
+Resume an interrupted capture or start a saved plan; replace `captures/RUN_FOLDER` with the printed folder containing `manifest.json`:
+
+```sh
+alephgeo capture resume captures/RUN_FOLDER
+```
+
+Rebuild outputs from downloaded files, offline:
+
+```sh
+alephgeo capture export captures/RUN_FOLDER
+```
+
+## Use in scripts
+
+Add `--json` for one JSON result on stdout; progress stays on stderr.
+
+```sh
+alephgeo satellite --at 41.8902 12.4922 -o captures --json > result.json
+alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures --no-plan --json
+```
+
+For all options, run `alephgeo COMMAND --help` (for example, `alephgeo streetview --help` or `alephgeo capture create --help`).
