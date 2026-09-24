@@ -213,8 +213,11 @@ def grid(area, zoom):
     if south < -MAX_LATITUDE or north > MAX_LATITUDE:
         raise ValueError("Imagery areas must stay within latitudes −85.0511…85.0511.")
 
+    # Projection roundoff grows with the world pixel size at high zooms.
+    tolerance = max(1e-7, 8 * math.ulp(256 * 2**zoom))
+
     def snap(value):
-        return round(value) if abs(value - round(value)) < 1e-7 else value
+        return round(value) if abs(value - round(value)) < tolerance else value
 
     left, top = (math.floor(snap(v)) for v in pixel((north, west), zoom))
     right, bottom = (math.ceil(snap(v)) for v in pixel((south, east), zoom))
