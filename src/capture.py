@@ -290,7 +290,7 @@ def capture_spheres(stage, run, folder, client, progress):
             photo.update(metadata)
             photo["filename"] = f"streetview/photos/{index + 1:06d}_sphere.{options['streetview_format']}"
             photo.update(streetview.save_sphere(
-                client, metadata, options["sphere_zoom"], folder / photo["filename"], progress))
+                client, metadata, options["sphere_zoom"], folder / photo["filename"]))
             photo.update(captured_at=now(), status="saved", source_url=streetview.metadata_url(sample["pano_id"]),
                          streetview_url=url("https://www.google.com/maps/@", api=1, map_action="pano",
                                             pano=sample["pano_id"], viewpoint=f"{photo['lat']},{photo['lon']}"))
@@ -298,7 +298,7 @@ def capture_spheres(stage, run, folder, client, progress):
             photo.update(status="skipped", reason=str(error))
         stage["results"].append(photo)
         yield
-        progress("Street View spheres", index + 1, total(stage))
+        progress("Street View", index + 1, total(stage))
 
 
 def capture_satellite(stage, folder, client, progress, satellite_format):

@@ -152,7 +152,7 @@ def tile_url(pano_id, zoom, x, y):
                cb_client="maps_sv.tactile", panoid=pano_id, zoom=zoom, x=x, y=y)
 
 
-def save_sphere(client, metadata, zoom, target, progress):
+def save_sphere(client, metadata, zoom, target):
     """Assemble native panorama tiles; retain partial tiles for retry/resume."""
     zoom = min(validate_sphere_zoom(zoom), len(metadata["image_sizes"]) - 1)
     width, height = metadata["image_sizes"][zoom]
@@ -161,7 +161,6 @@ def save_sphere(client, metadata, zoom, target, progress):
     target = Path(target)
     cache = target.parent / ".sphere-tiles" / metadata["pano_id"] / f"{zoom}-{width}x{height}-{tw}x{th}"
     count = columns * rows
-    progress("Panorama tiles", 0, count)
     with Image.new("RGB", (width, height)) as sphere:
         for y in range(rows):
             for x in range(columns):
@@ -176,7 +175,6 @@ def save_sphere(client, metadata, zoom, target, progress):
                     if not path.is_file():
                         write_bytes(path, data)
                     sphere.paste(tile, (x * tw, y * th))
-                progress("Panorama tiles", y * columns + x + 1, count)
         client.check_cancel()
         with atomic_path(target) as temporary:
             sphere.save(temporary, format="PNG" if target.suffix == ".png" else "JPEG", quality=90)

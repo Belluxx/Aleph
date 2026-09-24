@@ -101,6 +101,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     offsets = {"forward": 0, "backward": 180, "left": -90, "right": 90}
     directions = ("left", "right") if view == "both" else (view,)
     try:
+        progress("Street View", 0, len(samples))
         for index, sample in enumerate(samples, 1):
             try:
                 metadata = streetview.parse_metadata(client.get(streetview.metadata_url(sample["pano_id"])),
@@ -116,7 +117,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
                         photo = {**sample, **metadata}
                         if "heading" in photo:
                             photo["road_heading"] = photo.pop("heading")
-                        photo.update(streetview.save_sphere(client, metadata, sphere_zoom, folder / name, progress))
+                        photo.update(streetview.save_sphere(client, metadata, sphere_zoom, folder / name))
                         photo.update(path=str(folder / name), source_url=streetview.metadata_url(sample["pano_id"]))
                         result["photos"].append(photo)
                         continue
