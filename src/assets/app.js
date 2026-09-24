@@ -571,12 +571,14 @@ function showPhoto(index, move = false) {
   const figures = stop.photos.map((photo) => {
     const figure = node("figure", undefined, "photo-figure");
     const image = node("img");
-    image.alt = `${photo.side} view${photo.path_name ? " of " + photo.path_name : ""}`;
+    const sphere = photo.projection === "equirectangular";
+    image.alt = `${sphere ? "Full sphere panorama" : photo.side + " view"}${photo.path_name ? " of " + photo.path_name : ""}`;
     image.src = fileURL(state.selected.id, photo.filename);
     image.addEventListener("error", () => notice(`The saved photo ${photo.filename} could not be loaded.`), {once: true});
     const caption = node("figcaption");
     const imageryDate = photo.imagery_date;
-    caption.append(node("span", `${photo.side === "left" ? "Left" : "Right"} view, ${Math.round(photo.heading)}°${imageryDate ? " (" + imageryDate + ")" : ""}`));
+    const description = sphere ? `Full sphere · ${photo.width} × ${photo.height}` : `${photo.side === "left" ? "Left" : "Right"} view, ${Math.round(photo.heading)}°`;
+    caption.append(node("span", `${description}${imageryDate ? " (" + imageryDate + ")" : ""}`));
     const address = photo.streetview_url;
     if (address && /^https:\/\/(www\.)?google\.com\//.test(address)) {
       const link = node("a", "Open in Google ↗");
@@ -709,6 +711,9 @@ function renderCapturePanel() {
     $("stop-planning").disabled = !job.active || job.state === "stopping";
   }
   const sources = form.querySelectorAll('input[name="include"]:checked').length;
+  const sphere = form.elements.full_sphere.value === "true";
+  form.elements.fov.closest("label").hidden = sphere;
+  $("sphere-resolution").hidden = !sphere;
   for (const section of form.querySelectorAll("[data-source]")) {
     section.hidden = !form.querySelector(`input[name="include"][value="${section.dataset.source}"]`).checked;
   }
@@ -931,8 +936,9 @@ async function planCapture(event) {
   $("form-error").hidden = true;
   const data = new FormData(form);
   const options = {include: data.getAll("include"), depth: data.get("depth"),
+    full_sphere: data.get("full_sphere") === "true",
     streetview_format: data.get("streetview_format"), satellite_format: data.get("satellite_format")};
-  for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom"]) options[key] = Number(data.get(key));
+  for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom", "sphere_zoom"]) options[key] = Number(data.get(key));
   const bounds = [...state.draftBounds];
   state.submitting = true;
   setDrawMode(false);
@@ -969,7 +975,7 @@ function showPlan(plan) {
   if (!state.composing) return;
   state.plan = plan;
   const estimate = plan.estimate;
-  $("plan-duration").textContent = `About ${durationLabel(estimate.seconds)}`;
+  $("plan-duration").textContent = estimate.seconds === null ? "Download time depends on sphere resolution" : `About ${durationLabel(estimate.seconds)}`;
   const counts = $("plan-counts");
   counts.replaceChildren();
   const row = (label, value) => {
@@ -980,7 +986,7 @@ function showPlan(plan) {
   row("Selected area", areaLabel(areaMetrics(plan.bounds).area));
   const sources = plan.options.include;
   if (sources.includes("streetview")) {
-    row("Street View photos", estimate.streetview_photos.toLocaleString());
+    row(plan.options.full_sphere ? "Street View spheres" : "Street View photos", estimate.streetview_photos.toLocaleString());
     row("Street View stops", estimate.streetview_stops.toLocaleString());
   }
   if (sources.includes("satellite")) row("Satellite tiles", estimate.satellite_tiles.toLocaleString());

@@ -3,10 +3,15 @@
 import json
 import math
 import re
+import shutil
 import unicodedata
+from io import BytesIO
 from itertools import pairwise
+from pathlib import Path
 
-from .common import MissingImagery, url
+from PIL import Image
+
+from .common import MissingImagery, atomic_path, url, write_bytes
 from .geo import Line, RoadIndex, clip, distance, grid, inside, tiles
 
 EXCLUDED = re.compile(r"^(construction|proposed|planned|abandoned|razed|demolished)$")
@@ -51,7 +56,7 @@ def parse_coverage(data):
         ) from error
 
 
-def parse_metadata(data):
+def parse_metadata(data, *, full_sphere=False):
     try:
         message = google_json(data)[1][0]
         code = message[0][0]
@@ -74,6 +79,22 @@ def parse_metadata(data):
             and 1 <= date[1] <= 12
         ):
             result["imagery_date"] = f"{date[0]:04d}-{date[1]:02d}"
+        if full_sphere:
+            sizes, tile_size = message[2][3][:2]
+            sizes = [[size[0][1], size[0][0]] for size in sizes]
+            if (not sizes or len(sizes) > 6 or len(tile_size) != 2
+                    or any(type(v) is not int or not 1 <= v <= 32768
+                           for size in sizes + [tile_size] for v in size)
+                    or any(w * h > 150_000_000 for w, h in sizes)):
+                raise ValueError("Invalid panorama dimensions.")
+            orientation = message[5][0][1][2][:3]
+            if len(orientation) != 3:
+                raise ValueError("Missing panorama orientation.")
+            for angle in orientation:
+                validate_angle(angle, "panorama orientation")
+            result.update(image_sizes=sizes, tile_size=tile_size,
+                          panorama_heading=orientation[0],
+                          panorama_pitch=90 - orientation[1], panorama_roll=orientation[2])
         return result
     except (ValueError, TypeError, IndexError, KeyError) as error:
         raise ValueError(
@@ -118,6 +139,50 @@ def image_url(pano_id, heading, fov, pitch=0):
         pitch=-validate_angle(pitch, "pitch"),
         thumbfov=validate_fov(fov),
     )
+
+
+def validate_sphere_zoom(zoom):
+    if type(zoom) is not int or not 0 <= zoom <= 5:
+        raise ValueError("sphere_zoom: use a whole number from 0 to 5.")
+    return zoom
+
+
+def tile_url(pano_id, zoom, x, y):
+    return url("https://streetviewpixels-pa.googleapis.com/v1/tile",
+               cb_client="maps_sv.tactile", panoid=pano_id, zoom=zoom, x=x, y=y)
+
+
+def save_sphere(client, metadata, zoom, target, progress):
+    """Assemble native panorama tiles; retain partial tiles for retry/resume."""
+    zoom = min(validate_sphere_zoom(zoom), len(metadata["image_sizes"]) - 1)
+    width, height = metadata["image_sizes"][zoom]
+    tw, th = metadata["tile_size"]
+    columns, rows = math.ceil(width / tw), math.ceil(height / th)
+    target = Path(target)
+    cache = target.parent / ".sphere-tiles" / metadata["pano_id"] / f"{zoom}-{width}x{height}-{tw}x{th}"
+    count = columns * rows
+    progress("Panorama tiles", 0, count)
+    with Image.new("RGB", (width, height)) as sphere:
+        for y in range(rows):
+            for x in range(columns):
+                client.check_cancel()
+                path = cache / f"{x}-{y}.tile"
+                data = path.read_bytes() if path.is_file() else client.get(
+                    tile_url(metadata["pano_id"], zoom, x, y), missing_ok=True)
+                with Image.open(BytesIO(data)) as tile:
+                    if tile.format not in ("JPEG", "PNG") or tile.size != (tw, th):
+                        raise ValueError(f"Expected a panorama tile of {tw} × {th} pixels.")
+                    tile.load()
+                    if not path.is_file():
+                        write_bytes(path, data)
+                    sphere.paste(tile, (x * tw, y * th))
+                progress("Panorama tiles", y * columns + x + 1, count)
+        client.check_cancel()
+        with atomic_path(target) as temporary:
+            sphere.save(temporary, format="PNG" if target.suffix == ".png" else "JPEG", quality=90)
+    shutil.rmtree(cache)
+    return dict(projection="equirectangular", width=width, height=height,
+                sphere_zoom=zoom, tile_count=count)
 
 
 def roads(ways, area, depth):
@@ -297,6 +362,7 @@ def plan(client, area, options, progress, *, allow_empty=False):
             samples.append(dict(view, stop_in_path=stop))
     return dict(
         mode="streetview",
+        full_sphere=options["full_sphere"],
         paths=parts,
         samples=samples,
         results=[],

@@ -27,7 +27,8 @@ def describe(run):
         mode = stage["mode"]
         if mode == "streetview":
             label = "Street View"
-            message = f"{estimate['streetview_photos']:,} photos at {estimate['streetview_stops']:,} stops"
+            kind = "spheres" if stage.get("full_sphere") else "photos"
+            message = f"{estimate['streetview_photos']:,} {kind} at {estimate['streetview_stops']:,} stops"
         elif mode == "satellite":
             label = "Satellite"
             g = stage["grid"]
@@ -39,6 +40,9 @@ def describe(run):
             maps = estimate["osm_maps"]
             message = f"{maps:,} OSM {'map' if maps == 1 else 'maps'} and {estimate['terrain_tiles']:,} terrain tiles"
         print(f"  {label:<15}{message}", file=sys.stderr)
+    if estimate["seconds"] is None:
+        print("  Download time depends on panorama tile counts; progress is shown during capture.", file=sys.stderr)
+        return
     minutes, seconds = divmod(estimate["seconds"], 60)
     hours, minutes = divmod(minutes, 60)
     duration = f"{hours} hr {minutes} min" if hours else f"{minutes} min {seconds} sec" if minutes else f"{seconds} sec"
@@ -96,7 +100,7 @@ def query(args, progress):
             if args.pano_id and args.radius is not None:
                 raise ValueError("--radius applies to coordinates or a place name.")
             keys += ("pano_id", "street", "route", "reverse", "stops", "step", "view", "heading",
-                     "look_at", "pitch", "fov", "radius", "streetview_format")
+                     "look_at", "pitch", "fov", "radius", "streetview_format", "full_sphere", "sphere_zoom")
             operation = quick.street_photos
         else:
             if args.size is not None and (args.bbox is not None or args.tile is not None):

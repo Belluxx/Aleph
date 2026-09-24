@@ -30,6 +30,10 @@ Missing tiles remain transparent PNGs, including when JPEG is selected.
 Choose Street View photo formats with `streetview --streetview-format png`
 or `capture create --streetview-format png` (default: `jpg`).
 
+Add `--full-sphere` to `streetview` or `capture create` for one 360° panorama per stop.
+`--sphere-zoom 0–5` controls resolution (default: `3`); higher levels download more tiles.
+In the dashboard, choose **Street View → Capture type → Full sphere**.
+
 ## Use coordinates
 
 Coordinates are `LAT LON`; distances are in meters.

@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 
-from src import capture, streetview
+from src import capture, quick, streetview
 from src.common import MissingImagery
 from src.geo import coordinate
 
@@ -28,6 +28,20 @@ def metadata(pano_id="test_panorama_123", lat=45.0, lon=9.0):
         [[None, [[None, None, lat, lon]]]],
         [None, None, None, None, None, None, None, [2024, 2]],
     ]]]).encode()
+
+
+def sphere_metadata():
+    payload = json.loads(metadata()[5:])
+    message = payload[1][0]
+    message[2] = [None, None, None, [[[[3, 6]]], [4, 2]]]
+    message[5][0][1] += [None, [120, 88, 1]]
+    return json.dumps(payload).encode()
+
+
+def sphere_tile(color):
+    with BytesIO() as buffer, Image.new("RGB", (4, 2), color) as image:
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
 
 class CaptureTests(unittest.TestCase):
@@ -142,8 +156,90 @@ class CaptureTests(unittest.TestCase):
                 client.get.assert_called_once()
                 self.assertEqual(capture.load(self.folder)["stages"][0]["results"], [])
 
+    def sphere_run(self):
+        run = self.street_run()
+        run["options"].update(full_sphere=True, sphere_zoom=5, streetview_format="png")
+        run["stages"][0]["full_sphere"] = True
+        return run
+
+    def test_sphere_resume_reuses_tiles_and_exports_one_cropped_panorama(self):
+        run = self.sphere_run()
+        self.assertEqual(capture.total(run["stages"][0]), 1)
+        self.assertEqual(capture.estimate(run)["streetview_stops"], 1)
+        self.assertIsNone(capture.estimate(run)["seconds"])
+        client = Mock()
+        client.get.side_effect = [sphere_metadata(), sphere_tile("red"), sphere_tile("green"), KeyboardInterrupt()]
+        with self.assertRaises(KeyboardInterrupt):
+            capture.download(run, self.folder, client, self.progress)
+        saved = capture.load(self.folder)
+        self.assertEqual(saved["stages"][0]["results"], [])
+        self.assertFalse(list(self.folder.glob("streetview/photos/*_sphere.png")))
+        self.assertEqual(len(list(self.folder.rglob("*.tile"))), 2)
+
+        client.get.reset_mock(side_effect=True)
+        client.get.side_effect = [sphere_metadata(), sphere_tile("blue"), sphere_tile("white")]
+        capture.download(saved, self.folder, client, self.progress)
+        self.assertEqual(client.get.call_count, 3)
+        queries = [parse_qs(urlsplit(call.args[0]).query) for call in client.get.call_args_list[1:]]
+        self.assertEqual([(q["x"], q["y"], q["zoom"]) for q in queries],
+                         [(["0"], ["1"], ["0"]), (["1"], ["1"], ["0"])])
+        completed = capture.load(self.folder)
+        photo, = completed["stages"][0]["results"]
+        self.assertEqual((photo["projection"], photo["sphere_zoom"], photo["tile_count"]),
+                         ("equirectangular", 0, 4))
+        self.assertEqual((photo["panorama_heading"], photo["panorama_pitch"], photo["panorama_roll"]), (120, 2, 1))
+        self.assertNotIn("heading", photo)
+        self.assertNotIn("fov", photo)
+        with Image.open(self.folder / photo["filename"]) as image:
+            self.assertEqual(image.size, (6, 3))
+            self.assertEqual([image.getpixel(p) for p in [(0, 0), (5, 0), (0, 2), (5, 2)]],
+                             [(255, 0, 0), (0, 128, 0), (0, 0, 255), (255, 255, 255)])
+        self.assertFalse(list(self.folder.rglob("*.tile")))
+        exported = json.loads((self.folder / "streetview/photos.geojson").read_text())
+        self.assertEqual(len(exported["features"]), 1)
+        self.assertEqual(exported["features"][0]["properties"]["projection"], "equirectangular")
+        client.get.reset_mock()
+        capture.download(completed, self.folder, client, self.progress)
+        client.get.assert_not_called()
+        self.assertEqual(capture.estimate(completed)["seconds"], 0)
+
+    def test_unavailable_sphere_is_skipped_but_bad_tile_stops_capture(self):
+        for tile, state in [(MissingImagery("Gone"), "complete"), (image_bytes(), "failed")]:
+            with self.subTest(state=state):
+                run = self.sphere_run()
+                client = Mock()
+                client.get.side_effect = [sphere_metadata(), tile]
+                if state == "failed":
+                    with self.assertRaisesRegex(ValueError, "panorama tile"):
+                        capture.download(run, self.folder, client, self.progress)
+                else:
+                    capture.download(run, self.folder, client, self.progress)
+                    self.assertEqual(run["stages"][0]["results"][0]["status"], "skipped")
+                self.assertEqual(capture.load(self.folder)["state"], state)
+                self.assertFalse(list(self.folder.glob("streetview/photos/*_sphere.png")))
+
+    def test_quick_sphere_uses_tiles_and_saves_projection(self):
+        client = Mock()
+        client.get.side_effect = [sphere_metadata()] + [sphere_tile("red")] * 4
+        result = quick.street_photos(client, self.folder, self.progress, pano_id="test_panorama_123",
+                                     full_sphere=True, sphere_zoom=3, streetview_format="png")
+        self.assertEqual((result["saved_stops"], len(result["photos"])), (1, 1))
+        photo = result["photos"][0]
+        self.assertEqual(photo["projection"], "equirectangular")
+        with Image.open(photo["path"]) as image:
+            self.assertEqual(image.size, (6, 3))
+
 
 class GoogleResponseTests(unittest.TestCase):
+    def test_sphere_requires_valid_dimensions_and_orientation(self):
+        with self.assertRaisesRegex(ValueError, "Unreadable Google panorama metadata"):
+            streetview.parse_metadata(metadata(), full_sphere=True)
+        for invalid in (0, -1, True, 1.5, 100000):
+            payload = json.loads(sphere_metadata())
+            payload[1][0][2][3][0][0][0][0] = invalid
+            with self.subTest(size=invalid), self.assertRaises(ValueError):
+                streetview.parse_metadata(json.dumps(payload).encode(), full_sphere=True)
+
     def test_coverage_skips_sentinels_and_non_google_panoramas(self):
         payload = [None, [None, [
             [[1]],

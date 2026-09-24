@@ -101,6 +101,7 @@ def _streetview_command(commands):
     # Camera settings shared by single views and street sequences.
     street.add_argument("--pitch", type=float, default=0, help="vertical angle, positive up and negative down; any finite float32 degrees (default: 0)")
     street.add_argument("--fov", type=int, default=75, help="horizontal field of view, 5–175 whole degrees (default: 75)")
+    _sphere_options(street)
 
     _network_options(street)
     street.add_argument("--streetview-format", choices=("jpg", "png"), default="jpg")
@@ -140,6 +141,7 @@ def _capture_command(commands):
     area.add_argument("--step", type=float, help="target Street View spacing in meters (default: 30)")
     area.add_argument("--fov", type=int, help="horizontal field of view, 5–175 whole degrees (default: 75)")
     area.add_argument("--streetview-format", choices=("jpg", "png"), help="Street View photo format (default: jpg)")
+    _sphere_options(area)
 
     # Satellite imagery.
     area.add_argument("--satellite-zoom", type=int, help="satellite zoom, 1–21 (default: 18)")
@@ -165,6 +167,12 @@ def _capture_command(commands):
     export = actions.add_parser("export", help=export_help, description=export_help)
     export.add_argument("folder", type=Path, help="timestamped run directory containing manifest.json")
     _output_options(export)
+
+
+def _sphere_options(command):
+    command.add_argument("--full-sphere", action="store_true", help="save one full 360° panorama per stop; camera direction and fov do not apply")
+    command.add_argument("--sphere-zoom", type=int, choices=range(6), default=3,
+                         help="panorama resolution level, 0–5 (default: 3); capped at the highest available")
 
 
 def _dashboard_command(commands):

@@ -36,6 +36,7 @@ SOURCES = ("streetview", "satellite", "osm")
 FORMAT_VERSION = 3
 DEFAULT_OPTIONS = dict(
     include=list(SOURCES), step=30, fov=75, depth="roads", streetview_format="jpg",
+    full_sphere=False, sphere_zoom=3,
     delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14,
 )
 
@@ -68,6 +69,9 @@ def settings(values=None):
             requirement = "positive" if key == "step" else "nonnegative"
             raise ValueError(f"{key}: use a {requirement} finite number.")
     options["fov"] = streetview.validate_fov(options["fov"])
+    if type(options["full_sphere"]) is not bool:
+        raise ValueError("full_sphere must be true or false.")
+    options["sphere_zoom"] = streetview.validate_sphere_zoom(options["sphere_zoom"])
     for key, low, high in (
         ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14),
     ):
@@ -128,28 +132,23 @@ def plan(client, area, options, progress):
 
 def total(stage):
     if stage["mode"] == "streetview":
-        return len(stage["samples"]) * 2
+        return len(stage["samples"]) * (1 if stage.get("full_sphere") else 2)
     return stage["grid"]["rows"] * stage["grid"]["columns"] + (stage["mode"] == "osm")
 
 
 def estimate(run):
-    """Estimate remaining downloads using observed zero-delay capture timings.
-
-    2026-09-19 17:26:41 UTC: 66 Street View photos in 36 s,
-    including panorama metadata. 2026-09-19 17:09:18 UTC:
-    1,020 satellite tiles in 374 s and 9 terrain tiles in 10 s.
-    2026-09-21: map exports with completed multipolygons took 17–29 s for
-    10–1,000 km² from the 384 MB central Italy region. Region size affects this cost.
-    Planning, initial regional downloads and final exports are excluded.
-    """
+    """Estimate remaining downloads using observed download time with average internet connection"""
     counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0,
                   terrain_tiles=0, osm_maps=0)
     metadata_requests = 0
+    sphere_pending = False
     for stage in run["stages"]:
         remaining = total(stage) - len(stage["results"])
         if stage["mode"] == "streetview":
             counts["streetview_photos"] = remaining
-            samples = stage["samples"][len(stage["results"]) // 2:]
+            sphere_pending = bool(stage.get("full_sphere") and remaining)
+            per_stop = 1 if stage.get("full_sphere") else 2
+            samples = stage["samples"][len(stage["results"]) // per_stop:]
             counts["streetview_stops"] = len(samples)
             previous = None  # Metadata is fetched again when resuming a run.
             for sample in samples:
@@ -168,7 +167,9 @@ def estimate(run):
                         + counts["satellite_tiles"] * 0.37
                         + counts["terrain_tiles"] * 1.1 + counts["osm_maps"] * 30)
     delay_seconds = max(0, requests - 1) * run["options"]["delay"]
-    return dict(counts, seconds=math.ceil(download_seconds + delay_seconds))
+    # Native tile dimensions are learned during capture, so a sphere ETA is
+    # unavailable at planning time. Do not apply the two-thumbnail timings.
+    return dict(counts, seconds=None if sphere_pending else math.ceil(download_seconds + delay_seconds))
 
 
 def photos(run, after=0):
@@ -193,6 +194,9 @@ def open_image(data, size):
 
 def capture_streets(stage, run, folder, client, progress):
     options = run["options"]
+    if stage.get("full_sphere"):
+        yield from capture_spheres(stage, run, folder, client, progress)
+        return
     cached_id, metadata = None, None
     for index in range(len(stage["results"]), total(stage)):
         sample = stage["samples"][index // 2]
@@ -257,6 +261,35 @@ def capture_streets(stage, run, folder, client, progress):
         stage["results"].append(photo)
         yield
         progress("Street View", index + 1, total(stage))
+
+
+def capture_spheres(stage, run, folder, client, progress):
+    options = run["options"]
+    for index in range(len(stage["results"]), total(stage)):
+        sample = stage["samples"][index]
+        part = stage["paths"][sample["path_index"]]
+        photo = dict(sample, sequence=index + 1, path_id=part["id"], path_name=part["name"],
+                     osm_id=part["osm_id"], highway=part["highway"], layer=part["layer"],
+                     road_heading=sample["heading"], projection="equirectangular")
+        photo.pop("heading")  # A sphere has no single perspective camera heading.
+        try:
+            metadata = streetview.parse_metadata(
+                client.get(streetview.metadata_url(sample["pano_id"])), full_sphere=True)
+            if (metadata["pano_id"] != sample["pano_id"]
+                    or distance((sample["lat"], sample["lon"]), (metadata["lat"], metadata["lon"])) > 0.1):
+                raise ValueError("The planned panorama identity or position changed. Plan a new run.")
+            photo.update(metadata)
+            photo["filename"] = f"streetview/photos/{index + 1:06d}_sphere.{options['streetview_format']}"
+            photo.update(streetview.save_sphere(
+                client, metadata, options["sphere_zoom"], folder / photo["filename"], progress))
+            photo.update(captured_at=now(), status="saved", source_url=streetview.metadata_url(sample["pano_id"]),
+                         streetview_url=url("https://www.google.com/maps/@", api=1, map_action="pano",
+                                            pano=sample["pano_id"], viewpoint=f"{photo['lat']},{photo['lon']}"))
+        except MissingImagery as error:
+            photo.update(status="skipped", reason=str(error))
+        stage["results"].append(photo)
+        yield
+        progress("Street View spheres", index + 1, total(stage))
 
 
 def capture_satellite(stage, folder, client, progress, satellite_format):
@@ -459,7 +492,7 @@ def download(run, folder, client, progress):
                 work = capture_osm(stage, run["bounds"], folder, client, progress)
             for _ in work:
                 saved_count += 1
-                if stage["mode"] == "osm" or saved_count >= 50 or time.monotonic() - saved_at >= 30:
+                if stage["mode"] == "osm" or stage.get("full_sphere") or saved_count >= 50 or time.monotonic() - saved_at >= 30:
                     write_json(folder / "manifest.json", run)
                     saved_at, saved_count = time.monotonic(), 0
             write_json(folder / "manifest.json", run)
