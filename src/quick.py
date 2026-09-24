@@ -34,14 +34,16 @@ def location(client, *, at=None, place=None, match=None, best_match=False, endpo
 
 def street_photos(client, output, progress, *, at=None, place=None, pano_id=None,
                   street=None, match=None, best_match=False, endpoint=places.GEOCODER, route=None,
-                  reverse=False, stops=10, view="forward", heading=0, look_at=None,
+                  reverse=False, stops=None, step=None, view="forward", heading=0, look_at=None,
                   pitch=0, fov=75, radius=50, streetview_format="jpg"):
     streetview.validate_angle(heading, "heading")
     streetview.validate_angle(pitch, "pitch")
     fov = streetview.validate_fov(fov)
     places.positive(radius, "radius")
-    if type(stops) is not int or stops < 1:
+    if stops is not None and (type(stops) is not int or stops < 1):
         raise ValueError("stops must be a positive whole number.")
+    if step is not None:
+        places.positive(step, "step")
     if look_at is not None:
         places.point(look_at)
     selected_place, selected_route = None, None
@@ -49,6 +51,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     if street is not None:
         selected_place = places.choose(client, street, match=match, best_match=best_match, street=True, endpoint=endpoint)
         selected_route = routes.resolve(client, selected_place, route=route, reverse=reverse, progress=progress)
+        spacing, targets = routes.sampling(selected_route, step=step, stops=stops)
         points = selected_route["points"]
         south, west, north, east = extent(points)
         lower, upper = places.around((south, west), 80), places.around((north, east), 80)
@@ -56,7 +59,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
         views = coverage(client, area, progress)
         ways, _ = client.maps.data(area, progress=progress)
         context = streetview.roads(ways, area, "all")
-        samples, gaps = routes.match_views(views, selected_route, context, stops)
+        samples, gaps = routes.match_views(views, selected_route, context, spacing, targets)
     elif pano_id:
         if not streetview.PANO_ID.fullmatch(pano_id):
             raise ValueError("Invalid panorama ID.")
@@ -75,8 +78,10 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     output.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="aleph-streetview-", dir=output))
     result = dict(command="streetview", status="partial", folder=str(folder), photos=[], gaps=gaps,
-                  requested_stops=stops if street else 1, saved_stops=0,
+                  requested_stops=len(targets) if street else 1, saved_stops=0,
                   place=selected_place, source="Google Street View", captured_at=now())
+    if street and step is not None:
+        result["requested_step_m"] = step
     if selected_route:
         result["route"] = {key: value for key, value in selected_route.items() if key != "points"}
     offsets = {"forward": 0, "backward": 180, "left": -90, "right": 90}

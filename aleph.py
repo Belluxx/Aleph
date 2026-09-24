@@ -85,14 +85,17 @@ def query(args, progress):
             raise ValueError("--match and --best-match require --place or --street.")
         keys = ("at", "place", "match", "best_match")
         if args.command == "streetview":
-            if args.street is None and (args.stops is not None or args.view is not None
+            if args.street is None and (args.stops is not None or args.step is not None
+                                       or args.view is not None
                                        or args.route is not None or args.reverse):
-                raise ValueError("--stops, --view, --route, and --reverse require --street.")
+                raise ValueError("--stops, --step, --view, --route, and --reverse require --street.")
+            if args.street is not None and args.stops is None and args.step is None:
+                raise ValueError("--street requires --stops or --step.")
             if args.street is not None and (args.heading is not None or args.look_at is not None or args.radius is not None):
                 raise ValueError("Use --view for a street sequence; --heading, --look-at, and --radius are for single views.")
             if args.pano_id and args.radius is not None:
                 raise ValueError("--radius applies to coordinates or a place name.")
-            keys += ("pano_id", "street", "route", "reverse", "stops", "view", "heading",
+            keys += ("pano_id", "street", "route", "reverse", "stops", "step", "view", "heading",
                      "look_at", "pitch", "fov", "radius", "streetview_format")
             operation = quick.street_photos
         else:

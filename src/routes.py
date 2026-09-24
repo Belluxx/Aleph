@@ -1,5 +1,6 @@
 """Join named OSM ways into ordered, unbranched street routes."""
 
+import math
 from collections import defaultdict
 from itertools import pairwise
 
@@ -61,6 +62,23 @@ def describe(route, index):
                 closed=route["points"][0] == route["points"][-1])
 
 
+def sampling(route, *, step=None, stops=None):
+    """Normalize a sampling request to meter spacing and target distances."""
+    line = Line(route["points"])
+    closed = line.points[0] == line.points[-1]
+    if stops == 1:
+        return line.length, [line.length / 2]
+    if stops is not None:
+        intervals = stops if closed else stops - 1
+    else:
+        # Fit complete intervals without exceeding the requested step.
+        intervals = max(1, math.ceil(line.length / step))
+    step = line.length / intervals
+    targets = [(i + 0.5) * step for i in range(intervals)] if closed else [
+        i * step for i in range(intervals)] + [line.length]
+    return step, targets
+
+
 def resolve(client, place, *, route=None, reverse=False, progress=lambda *args: None):
     if not place["id"].startswith("way/"):
         raise RequestError("place_not_found", "Choose a street represented by an OSM way.")
@@ -83,43 +101,37 @@ def resolve(client, place, *, route=None, reverse=False, progress=lambda *args: 
     return selected
 
 
-def match_views(views, route, context, stops):
+def match_views(views, route, context, step, targets):
     """Keep distinct panoramas on the selected street, in target-distance order."""
     line = Line(route["points"])
     lines = [Line(part["points"]) for part in context]
     index = RoadIndex(lines)
-    closed = line.points[0] == line.points[-1]
-    spacing = line.length / max(1, stops if closed else stops - 1)
     candidates = []
     for view in views:
         location = (view["lat"], view["lon"])
-        road = streetview.match_road(context, lines, index, location, spacing)
+        road = streetview.match_road(context, lines, index, location, step)
         if road is None or context[road["path_index"]]["osm_id"] not in route["way_ids"]:
             continue
         meters, separation = line.project(location)
         if separation <= 30:
             candidates.append(dict(view, path_meters=meters, road_distance_m=separation,
-                                   heading=line.heading(meters, spacing)))
+                                   heading=line.heading(meters, step)))
     # Coverage can include different panorama IDs at the same physical position.
     unique = []
     for candidate in sorted(candidates, key=lambda item: (item["path_meters"], item["road_distance_m"], item["pano_id"])):
         if not unique or candidate["path_meters"] - unique[-1]["path_meters"] >= 0.1:
             unique.append(candidate)
     selected, gaps, used = [], [], set()
-    for stop in range(stops):
-        if closed:
-            target = (stop + 0.5) * spacing
-        else:
-            target = line.length / 2 if stops == 1 else stop * spacing
+    for stop, target in enumerate(targets, 1):
         eligible = [view for view in unique if view["pano_id"] not in used
-                    and abs(view["path_meters"] - target) <= spacing / 2 + 0.01]
+                    and abs(view["path_meters"] - target) <= step / 2 + 0.01]
         if eligible:
             chosen = min(eligible, key=lambda view: (abs(view["path_meters"] - target),
                                                     view["road_distance_m"], view["pano_id"]))
             used.add(chosen["pano_id"])
-            selected.append(dict(chosen, stop=stop + 1, target_meters=target,
+            selected.append(dict(chosen, stop=stop, target_meters=target,
                                  requested_location=list(line.at(target))))
         else:
-            gaps.append(dict(stop=stop + 1, target_meters=target, reason="no_coverage"))
+            gaps.append(dict(stop=stop, target_meters=target, reason="no_coverage"))
     selected.sort(key=lambda view: view["path_meters"])
     return selected, gaps

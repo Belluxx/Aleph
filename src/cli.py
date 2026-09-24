@@ -93,7 +93,9 @@ def _streetview_command(commands):
     # Street route, sampling, and orientation.
     street.add_argument("--route", type=int, help="choose a returned branch of a street")
     street.add_argument("--reverse", action="store_true", help="reverse the street traversal order")
-    street.add_argument("--stops", type=int, help="street positions (default: 10)")
+    sampling = street.add_mutually_exclusive_group()
+    sampling.add_argument("--stops", type=int, help="number of street positions")
+    sampling.add_argument("--step", type=float, help="target spacing between street positions in meters")
     street.add_argument("--view", choices=("forward", "backward", "left", "right", "both"), help="street orientation; both saves left and right (default: forward)")
 
     # Camera settings shared by single views and street sequences.
