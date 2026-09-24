@@ -91,10 +91,10 @@ def _streetview_command(commands):
     angle.add_argument("--look-at", nargs=2, type=float, metavar=("LAT", "LON"), help="turn a single view toward this point")
 
     # Street route, sampling, and orientation.
-    street.add_argument("--route", type=int, help="choose a returned branch of a street")
-    street.add_argument("--reverse", action="store_true", help="reverse the street traversal order")
+    street.add_argument("--route", type=int, help="capture only this numbered street section (default: all sections)")
+    street.add_argument("--reverse", action="store_true", help="reverse traversal within each street section")
     sampling = street.add_mutually_exclusive_group()
-    sampling.add_argument("--stops", type=int, help="number of street positions")
+    sampling.add_argument("--stops", type=int, help="total number of positions across the selected street sections")
     sampling.add_argument("--step", type=float, help="target spacing between street positions in meters")
     street.add_argument("--view", choices=("forward", "backward", "left", "right", "both"), help="street orientation; both saves left and right (default: forward)")
 

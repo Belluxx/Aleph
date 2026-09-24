@@ -66,19 +66,18 @@ alephgeo resolve --at 41.8902 12.4922 --nearby --radius 200
 ## Take photos along a street
 
 ```sh
-# Request photos at ten stops, looking forward along the street
+# Ten stops total, looking forward
 alephgeo streetview --street "Via del Corso, Rome" --best-match --stops 10 -o captures
 
-# Photograph both sides, targeting no more than 10 meters between stops
+# Both sides, targeting 10-meter spacing
 alephgeo streetview --street "Via del Corso, Rome" --best-match --step 10 --view both -o captures
 ```
 
-Every street sequence requires either `--stops N` or `--step METERS`.
-With `--step`, positions are distributed evenly along the selected route with
-no interval longer than the requested distance between target positions.
-Actual photo spacing depends on available panoramas and can be larger.
+Use `--stops N` for a total count or `--step METERS` for target spacing.
 
-`--view` accepts `forward`, `backward`, `left`, `right`, or `both`. Add `--reverse` to travel in the opposite direction. If the street has multiple branches, repeat with `--route N` using a returned route number. Stops without coverage are skipped.
+All street sections are included by default. Use `--route N` to select one (section numbers are in `result.json`).
+
+`--view` accepts `forward`, `backward`, `left`, `right`, or `both`. Add `--reverse` to reverse each section's direction.
 
 ## Download an area
 

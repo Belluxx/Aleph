@@ -145,12 +145,6 @@ def error_details(code, details):
     candidates = details.get("candidates", [])
     if code == "ambiguous_place" and candidates:
         place_rows(candidates, sys.stderr)
-    elif code == "ambiguous_route" and candidates:
-        rows(("ROUTE", "SECTION"), [
-            (item["route"], f"{item['length_m']:.0f} m · {coordinates(item['start'])} → "
-             f"{coordinates(item['end'])}" + (" (loop)" if item["closed"] else ""))
-            for item in candidates
-        ], sys.stderr)
     if details.get("gaps"):
         count = len(details["gaps"])
         print(f"  Missing coverage at {count} {'stop' if count == 1 else 'stops'}.", file=sys.stderr)

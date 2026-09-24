@@ -62,6 +62,18 @@ def describe(route, index):
                 closed=route["points"][0] == route["points"][-1])
 
 
+def allocate_stops(sections, stops):
+    """Divide a total stop count by section length, rounding largest remainders up."""
+    lengths = [Line(section["points"]).length for section in sections]
+    total = sum(lengths)
+    quotas = [stops * length / total for length in lengths]
+    counts = [math.floor(quota) for quota in quotas]
+    order = sorted(range(len(sections)), key=lambda i: quotas[i] - counts[i], reverse=True)
+    for index in order[:stops - sum(counts)]:
+        counts[index] += 1
+    return counts
+
+
 def sampling(route, *, step=None, stops=None):
     """Normalize a sampling request to meter spacing and target distances."""
     line = Line(route["points"])
@@ -80,6 +92,7 @@ def sampling(route, *, step=None, stops=None):
 
 
 def resolve(client, place, *, route=None, reverse=False, progress=lambda *args: None):
+    """Return every section by default, or one explicitly selected section."""
     if not place["id"].startswith("way/"):
         raise RequestError("place_not_found", "Choose a street represented by an OSM way.")
     name, ways = client.maps.street(place, progress)
@@ -88,16 +101,16 @@ def resolve(client, place, *, route=None, reverse=False, progress=lambda *args: 
     options = chains(ways)
     if not options:
         raise RequestError("place_not_found", "No usable street geometry was found.")
-    if route is None and len(options) > 1:
-        raise RequestError("ambiguous_route", "The street branches. Choose an ordered section with --route N.",
-                           candidates=[describe(item, i) for i, item in enumerate(options, 1)])
-    choice = 1 if route is None else route
-    if not 1 <= choice <= len(options):
+    if route is not None and not 1 <= route <= len(options):
         raise ValueError(f"--route must be from 1 to {len(options)}.")
-    selected = options[choice - 1]
-    if reverse:
-        selected["points"].reverse()
-    selected.update(describe(selected, choice), name=name, scope="connected_same_name_ways")
+    selected = []
+    for index, section in enumerate(options, 1):
+        if route is not None and index != route:
+            continue
+        if reverse:
+            section["points"].reverse()
+        section.update(describe(section, index), name=name, scope="connected_same_name_ways")
+        selected.append(section)
     return selected
 
 

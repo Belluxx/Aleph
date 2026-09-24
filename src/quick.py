@@ -46,20 +46,32 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
         places.positive(step, "step")
     if look_at is not None:
         places.point(look_at)
-    selected_place, selected_route = None, None
+    selected_place, selected_routes = None, []
+    requested_stops = 1
     gaps = []
     if street is not None:
         selected_place = places.choose(client, street, match=match, best_match=best_match, street=True, endpoint=endpoint)
-        selected_route = routes.resolve(client, selected_place, route=route, reverse=reverse, progress=progress)
-        spacing, targets = routes.sampling(selected_route, step=step, stops=stops)
-        points = selected_route["points"]
+        selected_routes = routes.resolve(client, selected_place, route=route, reverse=reverse, progress=progress)
+        points = [point for section in selected_routes for point in section["points"]]
         south, west, north, east = extent(points)
         lower, upper = places.around((south, west), 80), places.around((north, east), 80)
         area = bounds((lower[0], lower[1], upper[2], upper[3]))
         views = coverage(client, area, progress)
         ways, _ = client.maps.data(area, progress=progress)
         context = streetview.roads(ways, area, "all")
-        samples, gaps = routes.match_views(views, selected_route, context, spacing, targets)
+        samples, requested_stops = [], 0
+        counts = routes.allocate_stops(selected_routes, stops) if stops is not None else [None] * len(selected_routes)
+        for section, count in zip(selected_routes, counts):
+            if count == 0:
+                continue
+            spacing, targets = routes.sampling(section, step=step, stops=count)
+            section_samples, section_gaps = routes.match_views(views, section, context, spacing, targets)
+            for item in section_samples + section_gaps:
+                item["route"] = section["route"]
+                item["stop"] += requested_stops
+            samples.extend(section_samples)
+            gaps.extend(section_gaps)
+            requested_stops += len(targets)
     elif pano_id:
         if not streetview.PANO_ID.fullmatch(pano_id):
             raise ValueError("Invalid panorama ID.")
@@ -78,12 +90,13 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     output.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="aleph-streetview-", dir=output))
     result = dict(command="streetview", status="partial", folder=str(folder), photos=[], gaps=gaps,
-                  requested_stops=len(targets) if street else 1, saved_stops=0,
+                  requested_stops=requested_stops, saved_stops=0,
                   place=selected_place, source="Google Street View", captured_at=now())
     if street and step is not None:
         result["requested_step_m"] = step
-    if selected_route:
-        result["route"] = {key: value for key, value in selected_route.items() if key != "points"}
+    if selected_routes:
+        result["routes"] = [{key: value for key, value in section.items() if key != "points"}
+                            for section in selected_routes]
     offsets = {"forward": 0, "backward": 180, "left": -90, "right": 90}
     directions = ("left", "right") if view == "both" else (view,)
     try:
@@ -114,7 +127,10 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
                     result["photos"].append(photo)
                 result["saved_stops"] += 1
             except MissingImagery as error:
-                gaps.append(dict(stop=sample["stop"], reason="no_coverage", message=str(error)))
+                gap = dict(stop=sample["stop"], reason="no_coverage", message=str(error))
+                if street:
+                    gap["route"] = sample["route"]
+                gaps.append(gap)
             progress("Street View", index, len(samples))
         if not result["photos"]:
             raise RequestError("no_coverage", "The selected panoramas are no longer available.", folder=str(folder))
