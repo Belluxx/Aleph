@@ -156,7 +156,8 @@ def satellite(client, output, progress, *, at=None, place=None, match=None, best
     north, west = coordinate(g["left"], g["top"], zoom)
     south, east = coordinate(g["left"] + g["width"], g["top"] + g["height"], zoom)
     result = dict(command="satellite", status="complete", folder=str(folder),
-                  path=str(folder / "satellite.png"), manifest=str(folder / "manifest.json"),
+                  path=str(folder / "satellite.tif"), manifest=str(folder / "manifest.json"),
+                  png_path=str(folder / "satellite.png"),
                   requested_bounds=list(area), bounds=[south, west, north, east],
                   width=g["width"], height=g["height"], zoom=zoom, crs="EPSG:3857",
                   source="Google satellite", imagery_date=None, place=selected_place)

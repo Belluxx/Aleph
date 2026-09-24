@@ -56,4 +56,5 @@ class CaptureCommandTests(unittest.TestCase):
             with patch.object(Client, "get", side_effect=AssertionError("Export must stay offline")):
                 exported = invoke("export", folder)
             self.assertEqual(exported["folder"], folder)
+            self.assertTrue((Path(folder) / "satellite.tif").is_file())
             self.assertTrue((Path(folder) / "satellite.png").is_file())

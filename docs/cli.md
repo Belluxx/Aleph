@@ -16,6 +16,10 @@ alephgeo satellite --place "Colosseum, Rome" --best-match --size 200 -o captures
 
 `-o captures` saves each download in the `captures` dir. Otherwise the results folders are created in the current directory.
 
+Satellite captures produce `satellite.tif`, a lossless RGBA Cloud Optimized GeoTIFF (COG). Missing imagery is transparent. Large outputs automatically use BigTIFF.
+
+Each capture also includes `satellite.png` with identical full-resolution pixels and transparency. 
+
 ## Use coordinates
 
 Coordinates are `LAT LON`; distances are in meters.

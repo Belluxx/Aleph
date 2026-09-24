@@ -98,7 +98,10 @@ class QueryTests(unittest.TestCase):
         self.assertEqual(status, 0, result)
         self.assertGreater(result["width"] * result["height"], 16_000_000)
         self.assertGreater(self.get.call_count, 128)
+        self.assertEqual(Path(result["path"]).name, "satellite.tif")
         self.assertTrue(Path(result["path"]).is_file())
+        self.assertEqual(Path(result["png_path"]).name, "satellite.png")
+        self.assertTrue(Path(result["png_path"]).is_file())
 
     def test_single_streetview_uses_actual_camera_and_look_at_without_osm(self):
         def response(address, **kwargs):

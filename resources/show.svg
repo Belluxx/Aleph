@@ -558,7 +558,7 @@
                  id="path329" /></g><text
                id="g341"
                class="ink"
-               aria-label="satellite.png"
+               aria-label="satellite.tif"
                data-font="mono"
                data-font-size="21"
                x="997"
@@ -566,7 +566,7 @@
                font-family="'DejaVu Sans Mono', 'Courier New', monospace"
                font-size="21px"
                font-weight="400"
-               xml:space="preserve">satellite.png</text><text
+               xml:space="preserve">satellite.tif</text><text
                id="g363"
                class="muted"
                aria-label="Stitched image + raw tiles"

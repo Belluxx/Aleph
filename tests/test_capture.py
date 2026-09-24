@@ -122,14 +122,12 @@ class CaptureRecoveryTests(unittest.TestCase):
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
         self.client.get.side_effect = [image_bytes((256, 256), color) for color in colors]
         previous = image_bytes((1, 1), "black")
-        (self.folder / "satellite.png").write_bytes(previous)
-        compressor = Mock()
-        compressor.compress.side_effect = OSError("export disk full")
-        with patch("src.capture.zlib.compressobj", return_value=compressor):
+        (self.folder / "satellite.tif").write_bytes(previous)
+        with patch("src.satellite.zlib.compress", side_effect=OSError("export disk full")):
             with self.assertRaisesRegex(OSError, "export disk full"):
                 capture.download(run, self.folder, self.client, self.progress)
-        self.assertEqual((self.folder / "satellite.png").read_bytes(), previous)
-        self.assertFalse(list(self.folder.glob(".satellite.png-*")))
+        self.assertEqual((self.folder / "satellite.tif").read_bytes(), previous)
+        self.assertFalse(list(self.folder.glob(".satellite.tif-*")))
         saved = capture.load(self.folder)
         self.assertEqual(saved["state"], "failed")
         self.assertFalse(saved["exports_saved"])
@@ -137,15 +135,23 @@ class CaptureRecoveryTests(unittest.TestCase):
 
         self.client.get.reset_mock()
         self.client.get.side_effect = AssertionError("Saved tiles must not be downloaded again")
+        (self.folder / "satellite.png").write_bytes(previous)
+        with patch("src.satellite.zlib.compressobj", side_effect=OSError("PNG disk full")):
+            with self.assertRaisesRegex(OSError, "PNG disk full"):
+                capture.download(saved, self.folder, self.client, self.progress)
+        for extension in ("tif", "png"):
+            self.assertEqual((self.folder / f"satellite.{extension}").read_bytes(), previous)
+            self.assertFalse(list(self.folder.glob(f".satellite.{extension}-*")))
+        self.assertFalse(capture.load(self.folder)["exports_saved"])
         capture.download(saved, self.folder, self.client, self.progress)
         self.client.get.assert_not_called()
         self.assertEqual(capture.load(self.folder)["state"], "complete")
-        with Image.open(self.folder / "satellite.png") as mosaic:
+        with Image.open(self.folder / "satellite.tif") as mosaic:
             self.assertEqual(mosaic.size, (256, 256))
             self.assertEqual([mosaic.getpixel(point) for point in ((0, 0), (255, 0), (0, 255), (255, 255))],
                              [(*color, 255) for color in colors])
 
-    def test_satellite_strips_match_mosaic_for_empty_partial_and_complete_captures(self):
+    def test_satellite_cog_matches_mosaic_for_empty_partial_and_complete_captures(self):
         north, west = geo.coordinate(384, 384, 3)
         south, east = geo.coordinate(896, 984, 3)
         run = capture.plan(self.client, [south, west, north, east],
@@ -169,9 +175,14 @@ class CaptureRecoveryTests(unittest.TestCase):
                 with patch.object(Image, "new", wraps=Image.new) as allocate:
                     capture.export(run, self.folder, self.progress)
                 self.assertTrue(allocate.called)
-                self.assertTrue(all(call.args[1][1] <= 256 for call in allocate.call_args_list))
+                self.assertTrue(all(max(call.args[1]) <= 513 for call in allocate.call_args_list))
+                with Image.open(self.folder / "satellite.tif") as actual:
+                    self.assertEqual(actual.format, "TIFF")
+                    self.assertEqual(actual.size, expected.size)
+                    self.assertEqual(actual.mode, "RGBA")
+                    self.assertEqual(actual.tobytes(), expected.tobytes())
                 with Image.open(self.folder / "satellite.png") as actual:
-                    actual.verify()  # Includes PNG chunk CRCs.
+                    actual.verify()
                 with Image.open(self.folder / "satellite.png") as actual:
                     self.assertEqual(actual.size, expected.size)
                     self.assertEqual(actual.mode, "RGBA")
@@ -192,8 +203,8 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.assertTrue(missing.fp.closed)
         saved = capture.load(self.folder)
         self.assertEqual(saved["state"], "complete")
-        original = (self.folder / "satellite.png").read_bytes()
-        with Image.open(self.folder / "satellite.png") as mosaic:
+        original = (self.folder / "satellite.tif").read_bytes()
+        with Image.open(self.folder / "satellite.tif") as mosaic:
             self.assertEqual(mosaic.size, (256, 256))
             self.assertEqual(mosaic.getpixel((0, 0)), (255, 0, 0, 255))
             self.assertEqual(mosaic.crop((128, 0, 256, 128)).getchannel("A").getextrema(), (0, 0))
@@ -202,7 +213,7 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.client.get.reset_mock()
         capture.download(saved, self.folder, self.client, self.progress)
         self.client.get.assert_not_called()
-        self.assertEqual((self.folder / "satellite.png").read_bytes(), original)
+        self.assertEqual((self.folder / "satellite.tif").read_bytes(), original)
 
     def test_osm_failure_still_saves_terrain_and_resume_fetches_only_map(self):
         run = capture.plan(self.client, [1, 1, 2, 2],

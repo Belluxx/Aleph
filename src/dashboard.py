@@ -130,7 +130,7 @@ class Catalog:
 
     def file(self, identity, name):
         folder, run, _ = self.get(identity)
-        allowed = {"map.osm", "terrain.tif", "satellite.png", "manifest.json", "README.txt",
+        allowed = {"map.osm", "terrain.tif", "satellite.tif", "satellite.png", "manifest.json", "README.txt",
                    "streetview/photos.geojson", "streetview/paths.geojson", "streetview/plan.svg",
                    "satellite/patches.geojson", "satellite/plan.svg"}
         allowed.update(item["filename"] for stage in run["stages"] for item in stage["results"]
