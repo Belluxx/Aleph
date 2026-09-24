@@ -118,7 +118,7 @@ class CaptureRecoveryTests(unittest.TestCase):
         north, west = geo.coordinate(384, 384, 2)
         south, east = geo.coordinate(640, 640, 2)
         run = capture.plan(self.client, [south, west, north, east],
-                           dict(include=["satellite"], satellite_zoom=2), self.progress)
+                           dict(include=["satellite"], satellite_zoom=2, satellite_format="png"), self.progress)
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
         self.client.get.side_effect = [image_bytes((256, 256), color) for color in colors]
         previous = image_bytes((1, 1), "black")
@@ -188,11 +188,40 @@ class CaptureRecoveryTests(unittest.TestCase):
                     self.assertEqual(actual.mode, "RGBA")
                     self.assertEqual(actual.tobytes(), expected.tobytes())
 
+    def test_satellite_tile_formats_preserve_source_bytes_and_transparent_gaps(self):
+        north, west = geo.coordinate(256, 256, 2)
+        south, east = geo.coordinate(512, 512, 2)
+        for source in ("JPEG", "PNG", "missing"):
+            for extension in ("jpg", "png"):
+                with self.subTest(source=source, requested=extension):
+                    folder = self.folder / f"{source}-{extension}"
+                    folder.mkdir()
+                    run = capture.plan(self.client, [south, west, north, east],
+                                       dict(include=["satellite"], satellite_zoom=2,
+                                            satellite_format=extension), self.progress)
+                    with BytesIO() as buffer, Image.new("RGB", (256, 256), (72, 105, 210)) as image:
+                        image.save(buffer, format="PNG" if source == "missing" else source)
+                        data = buffer.getvalue()
+                    self.client.get.side_effect = [MissingImagery("missing") if source == "missing" else data]
+                    capture.download(run, folder, self.client, self.progress)
+                    filename = run["stages"][0]["results"][0]["filename"]
+                    expected = "png" if source == "missing" else extension
+                    self.assertEqual(Path(filename).suffix, "." + expected)
+                    with Image.open(folder / filename) as tile, tile.convert("RGBA") as rgba:
+                        self.assertEqual(tile.format, "JPEG" if expected == "jpg" else "PNG")
+                        if source == "missing":
+                            self.assertEqual(rgba.getchannel("A").getextrema(), (0, 0))
+                        elif tile.format == source:
+                            self.assertEqual((folder / filename).read_bytes(), data)
+                        for name in ("satellite.png", "satellite.tif"):
+                            with Image.open(folder / name) as merged:
+                                self.assertEqual(merged.tobytes(), rgba.tobytes())
+
     def test_satellite_404_leaves_transparent_tile_without_retrying_on_resume(self):
         north, west = geo.coordinate(384, 384, 2)
         south, east = geo.coordinate(640, 640, 2)
         run = capture.plan(self.client, [south, west, north, east],
-                           dict(include=["satellite"], satellite_zoom=2), self.progress)
+                           dict(include=["satellite"], satellite_zoom=2, satellite_format="png"), self.progress)
         missing = HTTPError("https://mt1.google.com/vt/", 404, "Not Found", {}, BytesIO())
         responses = [BytesIO(image_bytes((256, 256), "red")), missing,
                      BytesIO(image_bytes((256, 256), "blue")),

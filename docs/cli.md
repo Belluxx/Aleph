@@ -20,6 +20,16 @@ Satellite captures produce `satellite.tif`, a lossless RGBA Cloud Optimized GeoT
 
 Each capture also includes `satellite.png` with identical full-resolution pixels and transparency. 
 
+Choose the saved satellite tile format with `satellite --satellite-format png`
+or `satellite --satellite-format jpg` (default). For area captures, use
+`capture create --satellite-format png`; the dashboard has the same choice
+under **Advanced → Satellite → Tile format**. This only changes files in
+`satellite/patches/`: both `satellite.png` and `satellite.tif` are always generated.
+Missing tiles remain transparent PNGs, including when JPEG is selected.
+
+Choose Street View photo formats with `streetview --streetview-format png`
+or `capture create --streetview-format png` (default: `jpg`).
+
 ## Use coordinates
 
 Coordinates are `LAT LON`; distances are in meters.

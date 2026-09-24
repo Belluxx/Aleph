@@ -35,7 +35,7 @@ def location(client, *, at=None, place=None, match=None, best_match=False, endpo
 def street_photos(client, output, progress, *, at=None, place=None, pano_id=None,
                   street=None, match=None, best_match=False, endpoint=places.GEOCODER, route=None,
                   reverse=False, stops=10, view="forward", heading=0, look_at=None,
-                  pitch=0, fov=75, radius=50, image_format="jpg"):
+                  pitch=0, fov=75, radius=50, streetview_format="jpg"):
     streetview.validate_angle(heading, "heading")
     streetview.validate_angle(pitch, "pitch")
     fov = streetview.validate_fov(fov)
@@ -96,9 +96,9 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
                         angle = bearing(actual, look_at)
                     address = streetview.image_url(sample["pano_id"], angle, fov, pitch)
                     data = client.get(address, missing_ok=True)
-                    name = f"{len(result['photos']) + 1:03d}.{image_format}"
+                    name = f"{len(result['photos']) + 1:03d}.{streetview_format}"
                     with capture.open_image(data, (1024, 576)) as image, atomic_path(folder / name) as temporary:
-                        image.convert("RGB").save(temporary, format="PNG" if image_format == "png" else "JPEG", quality=80)
+                        image.convert("RGB").save(temporary, format="PNG" if streetview_format == "png" else "JPEG", quality=80)
                     photo = {**sample, **metadata}
                     photo.update(heading=angle, pitch=pitch, fov=fov,
                                  path=str(folder / name), source_url=address, width=1024, height=576)
@@ -126,7 +126,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
 
 
 def satellite(client, output, progress, *, at=None, place=None, match=None, best_match=False,
-              endpoint=places.GEOCODER, bbox=None, tile=None, size=200, zoom=19):
+              endpoint=places.GEOCODER, bbox=None, tile=None, size=200, zoom=19, satellite_format="jpg"):
     if tile is not None:
         zoom, x, y = tile
     places.number(zoom, "zoom", 1, 21)
@@ -144,7 +144,8 @@ def satellite(client, output, progress, *, at=None, place=None, match=None, best
                                           best_match=best_match, endpoint=endpoint)
         area = places.around(center, size)
     g = grid(area, zoom)
-    run = capture.plan(client, area, dict(include=["satellite"], satellite_zoom=zoom), progress)
+    run = capture.plan(client, area, dict(include=["satellite"], satellite_zoom=zoom,
+                                        satellite_format=satellite_format), progress)
     folder = capture.create_folder(run, output)
     try:
         capture.download(run, folder, client, progress)

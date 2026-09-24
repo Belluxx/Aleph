@@ -81,12 +81,16 @@ class QueryTests(unittest.TestCase):
     def test_exact_satellite_tile_is_cached_and_can_be_exported_offline(self):
         self.get.return_value = image_bytes((256, 256), "red")
         for attempt in range(2):
-            status, result = self.invoke("satellite", "--tile", "19/280337/194891", "-o", str(self.directory))
+            extension = ("png", "jpg")[attempt]
+            status, result = self.invoke("satellite", "--tile", "19/280337/194891",
+                                         "--satellite-format", extension, "-o", str(self.directory))
             self.assertEqual(status, 0)
             self.assertEqual((result["width"], result["height"]), (256, 256))
             self.assertEqual(result["cache"]["hits"], attempt)
             folder = Path(result["folder"])
             run = capture.load(folder)
+            self.assertEqual(run["options"]["satellite_format"], extension)
+            self.assertTrue(run["stages"][0]["results"][0]["filename"].endswith("." + extension))
             capture.export(run, folder, lambda *args: None)
             self.assertTrue(Path(result["path"]).is_file())
         self.assertEqual(self.get.call_count, 1)

@@ -119,11 +119,17 @@
           </fieldset>
           <details id="advanced-settings" class="settings">
             <summary>Advanced</summary>
+            <div class="settings-group" data-source="satellite">
+              <h3 class="settings-divider">Satellite</h3>
+              <div class="settings-grid">
+                <label>Tile format<select name="satellite_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
+              </div>
+            </div>
             <div class="settings-group" data-source="streetview">
               <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="4"/></svg>Street View</h3>
               <div class="settings-grid">
                 <label>Road coverage<select name="depth"><option value="main">Main roads</option><option value="roads">All roads</option><option value="all">Roads + paths</option></select></label>
-                <label>Photo format<select name="image_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
+                <label>Photo format<select name="streetview_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
               </div>
             </div>
             <div class="settings-group" data-source="osm">

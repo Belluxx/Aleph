@@ -930,7 +930,8 @@ async function planCapture(event) {
   }
   $("form-error").hidden = true;
   const data = new FormData(form);
-  const options = {include: data.getAll("include"), depth: data.get("depth"), image_format: data.get("image_format")};
+  const options = {include: data.getAll("include"), depth: data.get("depth"),
+    streetview_format: data.get("streetview_format"), satellite_format: data.get("satellite_format")};
   for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom"]) options[key] = Number(data.get(key));
   const bounds = [...state.draftBounds];
   state.submitting = true;

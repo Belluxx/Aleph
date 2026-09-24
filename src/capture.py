@@ -35,8 +35,8 @@ from .geo import (
 SOURCES = ("streetview", "satellite", "osm")
 FORMAT_VERSION = 3
 DEFAULT_OPTIONS = dict(
-    include=list(SOURCES), step=30, fov=75, depth="roads", image_format="jpg",
-    delay=0, satellite_zoom=18, terrain_zoom=14,
+    include=list(SOURCES), step=30, fov=75, depth="roads", streetview_format="jpg",
+    delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14,
 )
 
 OSM_NOTES = {
@@ -78,8 +78,9 @@ def settings(values=None):
         options[key] = int(value)
     if options["depth"] not in ("main", "roads", "all"):
         raise ValueError("Choose main, roads, or all for depth.")
-    if options["image_format"] not in ("jpg", "png"):
-        raise ValueError("Choose jpg or png for image format.")
+    for key in ("streetview_format", "satellite_format"):
+        if options[key] not in ("jpg", "png"):
+            raise ValueError(f"{key}: choose jpg or png.")
     return options
 
 
@@ -230,7 +231,7 @@ def capture_streets(stage, run, folder, client, progress):
                 photo["pano_id"], photo["heading"], photo["fov"]
             )
             data = client.get(photo["source_url"], missing_ok=True)
-            extension = options["image_format"]
+            extension = options["streetview_format"]
             photo["filename"] = "streetview/photos/" + streetview.photo_name(photo, extension)
             with (
                 open_image(data, (1024, 576)) as image,
@@ -258,20 +259,27 @@ def capture_streets(stage, run, folder, client, progress):
         progress("Street View", index + 1, total(stage))
 
 
-def capture_satellite(stage, folder, client, progress):
+def capture_satellite(stage, folder, client, progress, satellite_format):
     for i, tile in enumerate(tiles(stage["grid"])):
         if i < len(stage["results"]):
             continue
         address = f"https://mt1.google.com/vt/lyrs=s&x={tile['x']}&y={tile['y']}&z={tile['zoom']}"
+        extension = satellite_format
         try:
             data = client.get(address, missing_ok=True)
         except MissingImagery:
             # Persist the gap so resume and offline export keep it transparent.
+            extension = "png"
             with BytesIO() as buffer, Image.new("RGBA", (256, 256)) as image:
                 image.save(buffer, format="PNG")
                 data = buffer.getvalue()
         with open_image(data, (256, 256)) as image:
-            extension = "jpg" if image.format == "JPEG" else "png"
+            target = "JPEG" if extension == "jpg" else "PNG"
+            # Preserve the original bytes when they already have the chosen format.
+            if image.format != target:
+                with BytesIO() as buffer, image.convert("RGB" if extension == "jpg" else "RGBA") as converted:
+                    converted.save(buffer, format=target, quality=80)
+                    data = buffer.getvalue()
         name = (
             f"satellite/patches/satellite_z{tile['zoom']}_r{tile['row'] + 1:04d}_c{tile['column'] + 1:04d}"
             f"_x{tile['x']}_y{tile['y']}.{extension}"
@@ -446,7 +454,7 @@ def download(run, folder, client, progress):
             if stage["mode"] == "streetview":
                 work = capture_streets(stage, run, folder, client, progress)
             elif stage["mode"] == "satellite":
-                work = capture_satellite(stage, folder, client, progress)
+                work = capture_satellite(stage, folder, client, progress, run["options"]["satellite_format"])
             else:
                 work = capture_osm(stage, run["bounds"], folder, client, progress)
             for _ in work:

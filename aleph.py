@@ -87,7 +87,7 @@ def parser():
     street.add_argument("--pitch", type=float, default=0, help="vertical angle, positive up and negative down; any finite float32 degrees (default: 0)")
     street.add_argument("--fov", type=int, default=75, help="horizontal field of view, 5–175 whole degrees (default: 75)")
     street.add_argument("--radius", type=float, help="maximum panorama search distance in meters (default: 50)")
-    street.add_argument("--image-format", choices=("jpg", "png"), default="jpg")
+    street.add_argument("--streetview-format", choices=("jpg", "png"), default="jpg")
     output(street)
     network(street)
 
@@ -97,6 +97,8 @@ def parser():
     source.add_argument("--tile", type=tile_coordinates, metavar="Z/X/Y")
     satellite.add_argument("--size", type=float, help="square width in meters around a point (default: 200)")
     satellite.add_argument("--zoom", type=int, help="satellite zoom, 1–21 (default: 19)")
+    satellite.add_argument("--satellite-format", choices=("jpg", "png"), default="jpg",
+                           help="saved tile format; merged PNG and COG are always produced (default: jpg)")
     output(satellite)
     network(satellite)
 
@@ -118,7 +120,9 @@ def parser():
     area.add_argument("--step", type=float, help="target Street View spacing in meters (default: 30)")
     area.add_argument("--fov", type=int, help="horizontal field of view, 5–175 whole degrees (default: 75)")
     area.add_argument("--depth", choices=("main", "roads", "all"), help="road/path selection (default: roads)")
-    area.add_argument("--image-format", choices=("jpg", "png"))
+    area.add_argument("--streetview-format", choices=("jpg", "png"), help="Street View photo format (default: jpg)")
+    area.add_argument("--satellite-format", choices=("jpg", "png"),
+                      help="saved satellite tile format; merged PNG and COG are always produced (default: jpg)")
     area.add_argument("--satellite-zoom", type=int, help="satellite zoom, 1–21 (default: 18)")
     area.add_argument("--terrain-zoom", type=int, help="terrain zoom, 1–14 (default: 14)")
     area.set_defaults(**capture.DEFAULT_OPTIONS)
@@ -221,14 +225,14 @@ def query(args, progress):
             if args.pano_id and args.radius is not None:
                 raise ValueError("--radius applies to coordinates or a place name.")
             keys += ("pano_id", "street", "route", "reverse", "stops", "view", "heading",
-                     "look_at", "pitch", "fov", "radius", "image_format")
+                     "look_at", "pitch", "fov", "radius", "streetview_format")
             operation = quick.street_photos
         else:
             if args.size is not None and (args.bbox is not None or args.tile is not None):
                 raise ValueError("--size applies to coordinates or a place name.")
             if args.tile is not None and args.zoom is not None:
                 raise ValueError("--tile already includes its zoom; omit --zoom.")
-            keys += ("bbox", "tile", "size", "zoom")
+            keys += ("bbox", "tile", "size", "zoom", "satellite_format")
             operation = quick.satellite
         values = {key: getattr(args, key) for key in keys if getattr(args, key) is not None}
         result = operation(client, args.output, progress, endpoint=args.geocoder, **values)
