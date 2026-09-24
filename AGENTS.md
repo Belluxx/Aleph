@@ -14,8 +14,4 @@ Aleph is a Python CLI for capturing Google Street View photos, satellite imagery
 
 - Keep the CLI minimal and simple
 - Completely ignore backward compatibility
-- Avoid excessive testing, test what matters only
-
-## Validation
-
-- Run `python -m unittest discover -s tests -v` after Python changes
+- Do not add tests unless they really matter to avoid future regressions
