@@ -12,27 +12,17 @@ alephgeo streetview --place "Colosseum, Rome" --best-match -o captures
 alephgeo satellite --place "Colosseum, Rome" --best-match --size 200 -o captures
 ```
 
-`--best-match` picks the first search result. Omit it to see a list of matching places, then choose it with `--match TYPE/ID`.
+`--best-match` picks the first search result. Omit it to list matches, then choose with `--match TYPE/ID`.
 
-`-o captures` saves each download in the `captures` dir. Otherwise the results folders are created in the current directory.
+`-o captures` saves downloads under `captures/` instead of the current directory.
 
-Satellite captures produce `satellite.tif`, a lossless RGBA Cloud Optimized GeoTIFF (COG). Missing imagery is transparent. Large outputs automatically use BigTIFF.
+Satellite captures produce `satellite.png` and `satellite.tif` (Cloud Optimized GeoTIFF), with transparent gaps for missing imagery.
 
-Each capture also includes `satellite.png` with identical full-resolution pixels and transparency. 
+- `--tile-format jpg|png` sets the saved satellite tile format (default: `jpg`); both merged outputs are always generated.
+- `--streetview-format jpg|png` sets the Street View photo format (default: `jpg`).
+- `--full-sphere` saves one 360° panorama per stop. `--sphere-zoom 0–5` sets resolution (default: `3`).
 
-Choose the saved satellite tile format with `satellite --tile-format png`
-or `satellite --tile-format jpg` (default). For area captures, use
-`capture create --tile-format png`; the dashboard has the same choice
-under **Advanced → Satellite → Tile format**. This only changes files in
-`satellite/patches/`: both `satellite.png` and `satellite.tif` are always generated.
-Missing tiles remain transparent PNGs, including when JPEG is selected.
-
-Choose Street View photo formats with `streetview --streetview-format png`
-or `capture create --streetview-format png` (default: `jpg`).
-
-Add `--full-sphere` to `streetview` or `capture create` for one 360° panorama per stop.
-`--sphere-zoom 0–5` controls resolution (default: `3`); higher levels download more tiles.
-In the dashboard, choose **Street View → Capture type → Full sphere**.
+These options also work with `capture create`.
 
 ## Use coordinates
 
@@ -52,7 +42,7 @@ alephgeo satellite --at 41.8902 12.4922 --size 500 -o captures
 alephgeo satellite --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 ```
 
-Street View searches within 50 meters. Add `--radius 200` to search farther away if no panorama is found.
+Street View searches within 50 meters; use `--radius 200` to search farther.
 
 ## Find places
 
@@ -77,15 +67,13 @@ alephgeo streetview --street "Via del Corso, Rome" --best-match --stops 10 -o ca
 alephgeo streetview --street "Via del Corso, Rome" --best-match --step 10 --view both -o captures
 ```
 
-Use `--stops N` for a total count or `--step METERS` for target spacing.
-
-All street sections are included by default. Use `--route N` to select one (section numbers are in `result.json`).
+Use `--stops N` for a total count or `--step METERS` for spacing. All street sections are included; `--route N` selects one by its number in `result.json`.
 
 `--view` accepts `forward`, `backward`, `left`, `right`, or `both`. Add `--reverse` to reverse each section's direction.
 
 ## Download an area
 
-Capture all available data inside a rectangle (Street View, satellite imagery, OSM data, and terrain):
+Capture Street View, satellite imagery, OSM data, and terrain inside a rectangle:
 
 ```sh
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
@@ -93,15 +81,9 @@ alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 
 The command shows an estimate and asks before downloading. Add `--yes` to skip the prompt, or `--plan` to save a plan for later.
 
-To download only map data and terrain:
+Use `--sources` to select `streetview`, `satellite`, or `osm` (including terrain), or a combination.
 
-```sh
-alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources osm -o captures
-```
-
-`--sources` accepts one or more of `streetview`, `satellite`, and `osm` (which includes terrain).
-
-Resume an interrupted capture or start a saved plan; replace `captures/RUN_FOLDER` with the printed folder containing `manifest.json`:
+Resume a capture or start a saved plan using its printed run folder:
 
 ```sh
 alephgeo capture resume captures/RUN_FOLDER
@@ -122,4 +104,4 @@ alephgeo satellite --at 41.8902 12.4922 -o captures --json > result.json
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures --yes --json
 ```
 
-For all options, run `alephgeo COMMAND --help` (for example, `alephgeo streetview --help` or `alephgeo capture create --help`).
+For all options, run `alephgeo COMMAND --help`, such as `alephgeo capture create --help`.
