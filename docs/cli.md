@@ -20,9 +20,9 @@ Satellite captures produce `satellite.tif`, a lossless RGBA Cloud Optimized GeoT
 
 Each capture also includes `satellite.png` with identical full-resolution pixels and transparency. 
 
-Choose the saved satellite tile format with `satellite --satellite-format png`
-or `satellite --satellite-format jpg` (default). For area captures, use
-`capture create --satellite-format png`; the dashboard has the same choice
+Choose the saved satellite tile format with `satellite --tile-format png`
+or `satellite --tile-format jpg` (default). For area captures, use
+`capture create --tile-format png`; the dashboard has the same choice
 under **Advanced → Satellite → Tile format**. This only changes files in
 `satellite/patches/`: both `satellite.png` and `satellite.tif` are always generated.
 Missing tiles remain transparent PNGs, including when JPEG is selected.
@@ -91,7 +91,7 @@ Capture all available data inside a rectangle (Street View, satellite imagery, O
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 ```
 
-The command shows an estimate and asks before downloading. Add `--no-plan` to skip the prompt, or `--plan` to save a plan for later.
+The command shows an estimate and asks before downloading. Add `--yes` to skip the prompt, or `--plan` to save a plan for later.
 
 To download only map data and terrain:
 
@@ -119,7 +119,7 @@ Add `--json` for one JSON result on stdout; progress stays on stderr.
 
 ```sh
 alephgeo satellite --at 41.8902 12.4922 -o captures --json > result.json
-alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures --no-plan --json
+alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures --yes --json
 ```
 
 For all options, run `alephgeo COMMAND --help` (for example, `alephgeo streetview --help` or `alephgeo capture create --help`).

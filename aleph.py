@@ -218,7 +218,7 @@ def main(argv=None):
         save_only = action == "create" and args.plan
         if action != "export":
             describe(run)
-            if not (save_only or args.no_plan) and not proceed():
+            if not (save_only or args.yes) and not proceed():
                 print("Cancelled.", file=sys.stderr)
                 if as_json:
                     emit(dict(command="capture", action=action, status="cancelled"), True)

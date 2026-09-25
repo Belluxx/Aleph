@@ -119,7 +119,7 @@ def _satellite_command(commands):
     satellite.add_argument("--zoom", type=int, help="satellite zoom, 1–21 (default: 19)")
 
     _network_options(satellite)
-    satellite.add_argument("--satellite-format", choices=("jpg", "png"), default="jpg", help="saved tile format; merged PNG and COG are always produced (default: jpg)")
+    satellite.add_argument("--tile-format", dest="satellite_format", choices=("jpg", "png"), default="jpg", help="saved tile format; merged PNG and COG are always produced (default: jpg)")
     _output_options(satellite, directory=True)
 
 
@@ -133,8 +133,8 @@ def _capture_command(commands):
     # Planning and confirmation.
     planning = area.add_mutually_exclusive_group()
     planning.add_argument("--plan", action="store_true", help="save a plan without downloading imagery")
-    no_plan_help = "start without the confirmation prompt"
-    planning.add_argument("--no-plan", action="store_true", help=no_plan_help)
+    yes_help = "start without the confirmation prompt"
+    planning.add_argument("--yes", action="store_true", help=yes_help)
 
     # Street View coverage, camera, and photo format.
     area.add_argument("--depth", choices=("main", "roads", "all"), help="road/path selection (default: roads)")
@@ -145,7 +145,7 @@ def _capture_command(commands):
 
     # Satellite imagery.
     area.add_argument("--satellite-zoom", type=int, help="satellite zoom, 1–21 (default: 18)")
-    area.add_argument("--satellite-format", choices=("jpg", "png"), help="saved satellite tile format; merged PNG and COG are always produced (default: jpg)")
+    area.add_argument("--tile-format", dest="satellite_format", choices=("jpg", "png"), help="saved satellite tile format; merged PNG and COG are always produced (default: jpg)")
 
     # Terrain resolution.
     area.add_argument("--terrain-zoom", type=int, help="terrain zoom, 1–14 (default: 14)")
@@ -159,7 +159,7 @@ def _capture_command(commands):
     resume_help = "Continue a saved or planned run"
     resume = actions.add_parser("resume", help=resume_help, description=resume_help)
     resume.add_argument("folder", type=Path, help="timestamped run directory containing manifest.json")
-    resume.add_argument("--no-plan", action="store_true", help=no_plan_help)
+    resume.add_argument("--yes", action="store_true", help=yes_help)
     _cache_options(resume)
     _output_options(resume)
 
