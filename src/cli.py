@@ -34,10 +34,13 @@ def parser():
     return root
 
 
-def _output_options(command, *, directory=False):
-    if directory:
-        command.add_argument("-o", "--output", type=Path, default=Path("."), help="parent output directory")
+def _json_option(command):
     command.add_argument("--json", action="store_true", help="one JSON result on stdout; progress on stderr")
+
+
+def _output_options(command):
+    command.add_argument("-o", "--output", type=Path, default=Path("."), help="parent output directory")
+    _json_option(command)
 
 
 def _cache_options(command):
@@ -49,6 +52,12 @@ def _network_options(command):
     command.add_argument("--geocoder", default=os.environ.get("ALEPH_GEOCODER_URL", places.GEOCODER), metavar="URL", help="Photon server URL (or ALEPH_GEOCODER_URL)")
     command.add_argument("--delay", type=float, default=0, help="pause between requests in seconds (default: 0)")
     _cache_options(command)
+
+
+def _sphere_options(command):
+    command.add_argument("--full-sphere", action="store_true", help="save one full 360° panorama per stop; camera direction and fov do not apply")
+    command.add_argument("--sphere-zoom", type=int, choices=range(6), default=3,
+                         help="panorama resolution level, 0–5 (default: 3); capped at the highest available")
 
 
 def _locations(command):
@@ -75,7 +84,7 @@ def _resolve_command(commands):
     resolve.add_argument("--limit", type=int, default=10, help="maximum results (default: 10; max: 50)")
 
     _network_options(resolve)
-    _output_options(resolve)
+    _json_option(resolve)
 
 
 def _streetview_command(commands):
@@ -105,7 +114,7 @@ def _streetview_command(commands):
 
     _network_options(street)
     street.add_argument("--streetview-format", choices=("jpg", "png"), default="jpg")
-    _output_options(street, directory=True)
+    _output_options(street)
 
 
 def _satellite_command(commands):
@@ -120,7 +129,7 @@ def _satellite_command(commands):
 
     _network_options(satellite)
     satellite.add_argument("--tile-format", dest="satellite_format", choices=("jpg", "png"), default="jpg", help="saved tile format; merged PNG and COG are always produced (default: jpg)")
-    _output_options(satellite, directory=True)
+    _output_options(satellite)
 
 
 def _capture_command(commands):
@@ -153,7 +162,7 @@ def _capture_command(commands):
     # Requests, cache, and output shared by all capture sources.
     area.add_argument("--delay", type=float, help="pause between requests in seconds (default: 0)")
     _cache_options(area)
-    _output_options(area, directory=True)
+    _output_options(area)
     area.set_defaults(**capture.DEFAULT_OPTIONS)
 
     resume_help = "Continue a saved or planned run"
@@ -161,18 +170,12 @@ def _capture_command(commands):
     resume.add_argument("folder", type=Path, help="timestamped run directory containing manifest.json")
     resume.add_argument("--yes", action="store_true", help=yes_help)
     _cache_options(resume)
-    _output_options(resume)
+    _json_option(resume)
 
     export_help = "Rebuild images and metadata from saved files, offline"
     export = actions.add_parser("export", help=export_help, description=export_help)
     export.add_argument("folder", type=Path, help="timestamped run directory containing manifest.json")
-    _output_options(export)
-
-
-def _sphere_options(command):
-    command.add_argument("--full-sphere", action="store_true", help="save one full 360° panorama per stop; camera direction and fov do not apply")
-    command.add_argument("--sphere-zoom", type=int, choices=range(6), default=3,
-                         help="panorama resolution level, 0–5 (default: 3); capped at the highest available")
+    _json_option(export)
 
 
 def _dashboard_command(commands):

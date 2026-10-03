@@ -11,26 +11,8 @@ from pathlib import Path
 from PIL import Image
 
 from . import satellite, streetview, terrain
-from .common import (
-    MissingImagery,
-    atomic_path,
-    contained,
-    now,
-    url,
-    write_bytes,
-    write_json,
-)
-from .geo import (
-    bounds,
-    collection,
-    coordinate,
-    distance,
-    feature,
-    grid,
-    pixel,
-    tile_ring,
-    tiles,
-)
+from .common import MissingImagery, contained, now, number, open_image, positive, write_bytes, write_json
+from .geo import bounds, collection, coordinate, distance, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm")
 FORMAT_VERSION = 3
@@ -52,6 +34,26 @@ OSM_NOTES = {
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
 
+README = b"""Aleph capture
+
+streetview/photos/ contains photos; streetview/ holds GeoJSON and plan.svg.
+satellite/patches/ contains patches; satellite/ holds GeoJSON and plan.svg.
+Open satellite.tif for satellite imagery and map.osm for native map data.
+Photo headings are clockwise from north; left/right follow OSM node order.
+GeoJSON files record paths, photo locations, or satellite patch footprints.
+satellite.tif is a lossless RGBA Cloud Optimized GeoTIFF in EPSG:3857.
+It is north-up, cropped to enclosing pixels, with internal overviews.
+satellite.png contains the same full-resolution pixels for easy viewing.
+Transparent pixels mark missing imagery or unfinished downloads.
+terrain.tif is Float32 meters in EPSG:3857, without resampling.
+Keep terrain/tiles/ for resume and offline export.
+Filenames in the manifest and GeoJSON are relative to this run folder.
+See manifest.json for settings, sources, imagery dates, and coverage notes.
+
+Keep this folder together. Continue with: alephgeo capture resume FOLDER
+Rebuild images and metadata offline with: alephgeo capture export FOLDER
+"""
+
 
 def settings(values=None):
     """Validate settings shared by the CLI and dashboard."""
@@ -59,32 +61,16 @@ def settings(values=None):
     if not isinstance(values, dict) or values.keys() - DEFAULT_OPTIONS.keys():
         raise ValueError("Unknown capture settings.")
     options = {**DEFAULT_OPTIONS, **values}
-    if not isinstance(options["include"], list) or not all(
-        isinstance(source, str) for source in options["include"]
-    ):
-        raise ValueError("Choose one or more capture sources.")
-    selected = set(options["include"])
-    if not selected or selected - set(SOURCES):
+    include = options["include"]
+    if not isinstance(include, list) or not include or any(source not in SOURCES for source in include):
         raise ValueError("Choose one or more sources: streetview, satellite, osm.")
-    options["include"] = [source for source in SOURCES if source in selected]
-    for key in ("step", "delay"):
-        value = options[key]
-        if (type(value) not in (int, float) or not math.isfinite(value)
-                or value < 0 or (key == "step" and value == 0)):
-            requirement = "positive" if key == "step" else "nonnegative"
-            raise ValueError(f"{key}: use a {requirement} finite number.")
-    options["fov"] = streetview.validate_fov(options["fov"])
+    options["include"] = [source for source in SOURCES if source in include]
+    positive(options["step"], "step")
+    number(options["delay"], "delay", 0)
+    for key, low, high in (("fov", 5, 175), ("sphere_zoom", 0, 5), ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14)):
+        options[key] = number(options[key], key, low, high, whole=True)
     if type(options["full_sphere"]) is not bool:
         raise ValueError("full_sphere must be true or false.")
-    options["sphere_zoom"] = streetview.validate_sphere_zoom(options["sphere_zoom"])
-    for key, low, high in (
-        ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14),
-    ):
-        value = options[key]
-        if (type(value) not in (int, float) or not math.isfinite(value)
-                or not low <= value <= high or int(value) != value):
-            raise ValueError(f"{key}: use a whole number from {low} to {high}.")
-        options[key] = int(value)
     if options["depth"] not in ("main", "roads", "all"):
         raise ValueError("Choose main, roads, or all for depth.")
     for key in ("streetview_format", "satellite_format"):
@@ -107,37 +93,18 @@ def plan(client, area, options, progress):
     options = settings(options)
     stages = []
     if "streetview" in options["include"]:
-        stages.append(
-            streetview.plan(
-                client,
-                area,
-                options,
-                progress,
-                allow_empty=len(options["include"]) > 1,
-            )
-        )
+        stages.append(streetview.plan(client, area, options, progress, allow_empty=len(options["include"]) > 1))
     if "satellite" in options["include"]:
-        stages.append(
-            dict(mode="satellite", grid=grid(area, options["satellite_zoom"]), results=[])
-        )
+        stages.append(dict(mode="satellite", grid=grid(area, options["satellite_zoom"]), results=[]))
     if "osm" in options["include"]:
-        stages.append(
-            dict(mode="osm", grid=grid(area, options["terrain_zoom"]), results=[], notes=OSM_NOTES)
-        )
-    return dict(
-        format="aleph-python",
-        version=FORMAT_VERSION,
-        bounds=area,
-        options=options,
-        started_at=now(),
-        state="planned",
-        stages=stages,
-    )
+        stages.append(dict(mode="osm", grid=grid(area, options["terrain_zoom"]), results=[], notes=OSM_NOTES))
+    return dict(format="aleph-python", version=FORMAT_VERSION, bounds=area, options=options,
+                started_at=now(), state="planned", stages=stages)
 
 
 def total(stage):
     if stage["mode"] == "streetview":
-        return len(stage["samples"]) * (1 if stage.get("full_sphere") else 2)
+        return len(stage["samples"]) * (1 if stage["full_sphere"] else 2)
     return stage["grid"]["rows"] * stage["grid"]["columns"] + (stage["mode"] == "osm")
 
 
@@ -147,38 +114,28 @@ def estimate(run):
     Excludes planning, initial regional PBF downloads, and final merged exports.
     Partly downloaded spheres are counted in full; their cached tiles may save time.
     """
-    counts = dict(streetview_photos=0, streetview_stops=0, streetview_tiles=0, satellite_tiles=0,
-                  terrain_tiles=0, osm_maps=0)
-    metadata_requests = thumbnail_requests = 0
+    counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0, terrain_tiles=0, osm_maps=0)
+    requests = dict.fromkeys(REQUEST_SECONDS, 0)
     for stage in run["stages"]:
         remaining = total(stage) - len(stage["results"])
         if stage["mode"] == "streetview":
-            counts["streetview_photos"] = remaining
-            per_stop = 1 if stage.get("full_sphere") else 2
-            if stage.get("full_sphere"):
-                counts["streetview_tiles"] = remaining * SPHERE_TILES[run["options"]["sphere_zoom"]]
+            sphere = stage["full_sphere"]
+            stops = len(stage["samples"]) - len(stage["results"]) // (1 if sphere else 2)
+            counts.update(streetview_photos=remaining, streetview_stops=stops)
+            requests["metadata"] = stops  # Metadata is fetched again when resuming a run.
+            if sphere:
+                requests["sphere_tile"] = remaining * SPHERE_TILES[run["options"]["sphere_zoom"]]
             else:
-                thumbnail_requests = remaining
-            samples = stage["samples"][len(stage["results"]) // per_stop:]
-            counts["streetview_stops"] = len(samples)
-            previous = None  # Metadata is fetched again when resuming a run.
-            for sample in samples:
-                if stage.get("full_sphere") or sample["pano_id"] != previous:
-                    metadata_requests += 1
-                    previous = sample["pano_id"]
+                requests["photo"] = remaining
         elif stage["mode"] == "satellite":
-            counts["satellite_tiles"] = remaining
+            counts["satellite_tiles"] = requests["satellite_tile"] = remaining
         else:
-            counts["osm_maps"] = int(not any(item["filename"] == "map.osm"
-                                             for item in stage["results"]))
-            counts["terrain_tiles"] = remaining - counts["osm_maps"]
-    requests = dict(metadata=metadata_requests, photo=thumbnail_requests,
-                    sphere_tile=counts["streetview_tiles"], satellite_tile=counts["satellite_tiles"],
-                    terrain_tile=counts["terrain_tiles"])
-    download_seconds = sum(count * REQUEST_SECONDS[kind] for kind, count in requests.items())
-    download_seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
-    delay_seconds = max(0, sum(requests.values()) - 1) * run["options"]["delay"]
-    return dict(counts, seconds=math.ceil(download_seconds + delay_seconds))
+            counts["osm_maps"] = int(not any(item["filename"] == "map.osm" for item in stage["results"]))
+            counts["terrain_tiles"] = requests["terrain_tile"] = remaining - counts["osm_maps"]
+    seconds = sum(count * REQUEST_SECONDS[kind] for kind, count in requests.items())
+    seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
+    seconds += max(0, sum(requests.values()) - 1) * run["options"]["delay"]
+    return dict(counts, seconds=math.ceil(seconds))
 
 
 def photos(run, after=0):
@@ -189,82 +146,40 @@ def photos(run, after=0):
     )
 
 
-def open_image(data, size):
-    image = Image.open(BytesIO(data))
-    try:
-        if image.format not in ("JPEG", "PNG") or image.size != size:
-            raise ValueError(f"Expected a JPEG or PNG image of {size[0]} × {size[1]} pixels.")
-        image.load()
-        return image
-    except BaseException:
-        image.close()
-        raise
-
-
-def capture_streets(stage, run, folder, client, progress):
+def capture_streetview(stage, run, folder, client, progress):
+    """Save both roadside photos per stop, or one full sphere."""
     options = run["options"]
-    if stage.get("full_sphere"):
-        yield from capture_spheres(stage, run, folder, client, progress)
-        return
-    cached_id, metadata = None, None
+    sphere = stage["full_sphere"]
+    metadata = None
+    progress("Street View", len(stage["results"]), total(stage))
     for index in range(len(stage["results"]), total(stage)):
-        sample = stage["samples"][index // 2]
+        sample = stage["samples"][index if sphere else index // 2]
         part = stage["paths"][sample["path_index"]]
-        side = "left" if index % 2 == 0 else "right"
-        photo = dict(
-            sample,
-            side=side,
-            sequence=index + 1,
-            path_id=part["id"],
-            path_name=part["name"],
-            osm_id=part["osm_id"],
-            highway=part["highway"],
-            layer=part["layer"],
-            road_heading=sample["heading"],
-            heading=(sample["heading"] + (-90 if side == "left" else 90)) % 360,
-            pitch=0,
-            fov=options["fov"],
-        )
+        photo = dict(sample, sequence=index + 1, path_id=part["id"], path_name=part["name"], osm_id=part["osm_id"],
+                     highway=part["highway"], layer=part["layer"], road_heading=sample["heading"])
         try:
-            if cached_id != sample["pano_id"]:
-                metadata = streetview.parse_metadata(
-                    client.get(streetview.metadata_url(sample["pano_id"]))
-                )
-                if (
-                    metadata["pano_id"] != sample["pano_id"]
-                    or distance((sample["lat"], sample["lon"]), (metadata["lat"], metadata["lon"]))
-                    > 0.1
-                ):
-                    raise ValueError(
-                        "The planned panorama identity or position changed. Plan a new run."
-                    )
-                cached_id = sample["pano_id"]
+            # Both sides of a stop share one panorama.
+            if metadata is None or metadata["pano_id"] != sample["pano_id"]:
+                fetched = streetview.fetch_metadata(client, sample["pano_id"], full_sphere=sphere)
+                if (fetched["pano_id"] != sample["pano_id"]
+                        or distance((sample["lat"], sample["lon"]), (fetched["lat"], fetched["lon"])) > 0.1):
+                    raise ValueError("The planned panorama identity or position changed. Plan a new run.")
+                metadata = fetched
             photo.update(metadata)
-            photo["source_url"] = streetview.image_url(
-                photo["pano_id"], photo["heading"], photo["fov"]
-            )
-            data = client.get(photo["source_url"], missing_ok=True)
-            extension = options["streetview_format"]
-            photo["filename"] = "streetview/photos/" + streetview.photo_name(photo, extension)
-            with (
-                open_image(data, (1024, 576)) as image,
-                atomic_path(folder / photo["filename"]) as temporary,
-            ):
-                image.convert("RGB").save(
-                    temporary, format="PNG" if extension == "png" else "JPEG", quality=80
-                )
-            photo.update(width=1024, height=576, captured_at=now(), status="saved")
-            photo["streetview_url"] = url(
-                "https://www.google.com/maps/@",
-                api=1,
-                map_action="pano",
-                viewpoint=f"{photo['lat']},{photo['lon']}",
-                heading=photo["heading"],
-                pitch=0,
-                # Maps links support 10–100°, unlike the thumbnail endpoint.
-                fov=max(10, min(100, photo["fov"])),
-                pano=photo["pano_id"],
-            )
+            if sphere:
+                del photo["heading"]  # A sphere has no single perspective camera heading.
+                photo["filename"] = f"streetview/photos/{index + 1:06d}_sphere.{options['streetview_format']}"
+                photo.update(streetview.save_sphere(client, metadata, options["sphere_zoom"], folder / photo["filename"]),
+                             source_url=streetview.metadata_url(sample["pano_id"]))
+            else:
+                side = "left" if index % 2 == 0 else "right"
+                photo.update(side=side, heading=(sample["heading"] + (-90 if side == "left" else 90)) % 360,
+                             pitch=0, fov=options["fov"])
+                photo["source_url"] = streetview.image_url(photo["pano_id"], photo["heading"], photo["fov"])
+                data = client.get(photo["source_url"], missing_ok=True)
+                photo["filename"] = "streetview/photos/" + streetview.photo_name(photo, options["streetview_format"])
+                photo.update(streetview.save_photo(data, folder / photo["filename"]))
+            photo.update(captured_at=now(), status="saved", streetview_url=streetview.maps_url(photo))
         except MissingImagery as error:
             photo.update(status="skipped", reason=str(error))
         stage["results"].append(photo)
@@ -272,41 +187,13 @@ def capture_streets(stage, run, folder, client, progress):
         progress("Street View", index + 1, total(stage))
 
 
-def capture_spheres(stage, run, folder, client, progress):
-    options = run["options"]
-    for index in range(len(stage["results"]), total(stage)):
-        sample = stage["samples"][index]
-        part = stage["paths"][sample["path_index"]]
-        photo = dict(sample, sequence=index + 1, path_id=part["id"], path_name=part["name"],
-                     osm_id=part["osm_id"], highway=part["highway"], layer=part["layer"],
-                     road_heading=sample["heading"], projection="equirectangular")
-        photo.pop("heading")  # A sphere has no single perspective camera heading.
-        try:
-            metadata = streetview.parse_metadata(
-                client.get(streetview.metadata_url(sample["pano_id"])), full_sphere=True)
-            if (metadata["pano_id"] != sample["pano_id"]
-                    or distance((sample["lat"], sample["lon"]), (metadata["lat"], metadata["lon"])) > 0.1):
-                raise ValueError("The planned panorama identity or position changed. Plan a new run.")
-            photo.update(metadata)
-            photo["filename"] = f"streetview/photos/{index + 1:06d}_sphere.{options['streetview_format']}"
-            photo.update(streetview.save_sphere(
-                client, metadata, options["sphere_zoom"], folder / photo["filename"]))
-            photo.update(captured_at=now(), status="saved", source_url=streetview.metadata_url(sample["pano_id"]),
-                         streetview_url=url("https://www.google.com/maps/@", api=1, map_action="pano",
-                                            pano=sample["pano_id"], viewpoint=f"{photo['lat']},{photo['lon']}"))
-        except MissingImagery as error:
-            photo.update(status="skipped", reason=str(error))
-        stage["results"].append(photo)
-        yield
-        progress("Street View", index + 1, total(stage))
-
-
-def capture_satellite(stage, folder, client, progress, satellite_format):
+def capture_satellite(stage, run, folder, client, progress):
+    progress("Satellite", len(stage["results"]), total(stage))
     for i, tile in enumerate(tiles(stage["grid"])):
         if i < len(stage["results"]):
             continue
         address = f"https://mt1.google.com/vt/lyrs=s&x={tile['x']}&y={tile['y']}&z={tile['zoom']}"
-        extension = satellite_format
+        extension = run["options"]["satellite_format"]
         try:
             data = client.get(address, missing_ok=True)
         except MissingImagery:
@@ -322,21 +209,19 @@ def capture_satellite(stage, folder, client, progress, satellite_format):
                 with BytesIO() as buffer, image.convert("RGB" if extension == "jpg" else "RGBA") as converted:
                     converted.save(buffer, format=target, quality=80)
                     data = buffer.getvalue()
-        name = (
-            f"satellite/patches/satellite_z{tile['zoom']}_r{tile['row'] + 1:04d}_c{tile['column'] + 1:04d}"
-            f"_x{tile['x']}_y{tile['y']}.{extension}"
-        )
+        name = (f"satellite/patches/satellite_z{tile['zoom']}_r{tile['row'] + 1:04d}_c{tile['column'] + 1:04d}"
+                f"_x{tile['x']}_y{tile['y']}.{extension}")
         write_bytes(folder / name, data)
         stage["results"].append(dict(tile, filename=name, source_url=address, captured_at=now()))
         yield
         progress("Satellite", i + 1, total(stage))
 
 
-def capture_osm(stage, area, folder, client, progress):
+def capture_osm(stage, run, folder, client, progress):
     failure = None
     if not any(item["filename"] == "map.osm" for item in stage["results"]):
         try:
-            metadata = client.maps.export(area, folder / "map.osm", progress)
+            metadata = client.maps.export(run["bounds"], folder / "map.osm", progress)
             stage["results"].append(dict(filename="map.osm", captured_at=now(), **metadata))
             yield
         except (OSError, ValueError) as error:
@@ -354,13 +239,14 @@ def capture_osm(stage, area, folder, client, progress):
         terrain.validate(terrain.TIFF(BytesIO(data)), tile)
         name = f"terrain/tiles/terrain_z{tile['zoom']}_x{tile['x']}_y{tile['y']}.tif"
         write_bytes(folder / name, data)
-        stage["results"].append(
-            dict(tile, filename=name, source_url=address, captured_at=now())
-        )
+        stage["results"].append(dict(tile, filename=name, source_url=address, captured_at=now()))
         yield
         progress(label, i + 1, count)
     if failure is not None:
         raise failure
+
+
+STAGES = dict(streetview=capture_streetview, satellite=capture_satellite, osm=capture_osm)
 
 
 def export(run, folder, progress, *, rebuild=True):
@@ -372,12 +258,10 @@ def export(run, folder, progress, *, rebuild=True):
         if stage["mode"] == "streetview":
             write_json(folder / "streetview/photos.geojson", photos(run))
         elif stage["mode"] == "satellite":
-            write_json(
-                folder / "satellite/patches.geojson",
-                collection(feature("Polygon", [tile_ring(p)], p) for p in stage["results"]),
-            )
+            write_json(folder / "satellite/patches.geojson",
+                       collection(feature("Polygon", [tile_ring(p)], p) for p in stage["results"]))
             satellite.merge(stage, folder, progress)
-        elif stage["mode"] == "osm":
+        else:
             terrain_results = [item for item in stage["results"] if "x" in item]
             count = stage["grid"]["rows"] * stage["grid"]["columns"]
             if len(terrain_results) == count and (rebuild or not (folder / "terrain.tif").is_file()):
@@ -387,27 +271,10 @@ def export(run, folder, progress, *, rebuild=True):
 
 
 def save_preview(run, folder):
+    """Write the README, planned street paths, and a north-up plan.svg per imagery stage."""
     if run["options"]["include"] == ["osm"]:
         return
-    write_bytes(
-        folder / "README.txt",
-        b"Aleph capture\n\n"
-        b"streetview/photos/ contains photos; streetview/ holds GeoJSON and plan.svg.\n"
-        b"satellite/patches/ contains patches; satellite/ holds GeoJSON and plan.svg.\n"
-        b"Open satellite.tif for satellite imagery and map.osm for native map data.\n"
-        b"Photo headings are clockwise from north; left/right follow OSM node order.\n"
-        b"GeoJSON files record paths, photo locations, or satellite patch footprints.\n"
-        b"satellite.tif is a lossless RGBA Cloud Optimized GeoTIFF in EPSG:3857.\n"
-        b"It is north-up, cropped to enclosing pixels, with internal overviews.\n"
-        b"satellite.png contains the same full-resolution pixels for easy viewing.\n"
-        b"Transparent pixels mark missing imagery or unfinished downloads.\n"
-        b"terrain.tif is Float32 meters in EPSG:3857, without resampling.\n"
-        b"Keep terrain/tiles/ for resume and offline export.\n"
-        b"Filenames in the manifest and GeoJSON are relative to this run folder.\n"
-        b"See manifest.json for settings, sources, imagery dates, and coverage notes.\n\n"
-        b"Keep this folder together. Continue with: alephgeo capture resume FOLDER\n"
-        b"Rebuild images and metadata offline with: alephgeo capture export FOLDER\n",
-    )
+    write_bytes(folder / "README.txt", README)
     area = run["bounds"]
     left, top = pixel((area[2], area[1]), 17)
     right, bottom = pixel((area[0], area[3]), 17)
@@ -417,59 +284,34 @@ def save_preview(run, folder):
         x, y = pixel(point, 17)
         return f"{25 + (x - left) * scale:.2f},{45 + (y - top) * scale:.2f}"
 
+    def corner(x, y, zoom):
+        return xy(coordinate(x * 256, y * 256, zoom))
+
     for stage in run["stages"]:
-        if stage["mode"] == "osm":
-            continue
-        drawing = []
         if stage["mode"] == "streetview":
-            write_json(
-                folder / "streetview/paths.geojson",
-                collection(
-                    feature(
-                        "LineString",
-                        [[p[1], p[0]] for p in part["points"]],
-                        {k: v for k, v in part.items() if k != "points"},
-                    )
-                    for part in stage["paths"]
-                ),
-            )
-            roads = "".join(
-                "M" + "L".join(xy(p) for p in part["points"]) for part in stage["paths"]
-            )
-            gaps = "".join(
-                f"M{xy(gap['start'])}L{xy(gap['end'])}" for gap in stage["coverage"]["gaps"]
-            )
+            write_json(folder / "streetview/paths.geojson", collection(
+                feature("LineString", [[p[1], p[0]] for p in part["points"]],
+                        {k: v for k, v in part.items() if k != "points"})
+                for part in stage["paths"]))
+            roads = "".join("M" + "L".join(xy(p) for p in part["points"]) for part in stage["paths"])
+            gaps = "".join(f"M{xy(gap['start'])}L{xy(gap['end'])}" for gap in stage["coverage"]["gaps"])
             stops = "".join(f"M{xy((p['lat'], p['lon']))}h.1" for p in stage["samples"])
-            drawing.extend(
-                [
-                    f'<path d="{roads}" stroke="#888" stroke-width="2"/>',
-                    f'<path d="{gaps}" stroke="#a32632" stroke-width="4" stroke-dasharray="3 5"/>',
-                    f'<path d="{stops}" stroke="#a32632" stroke-width="6" stroke-linecap="round"/>',
-                ]
-            )
+            drawing = [
+                f'<path d="{roads}" stroke="#888" stroke-width="2"/>',
+                f'<path d="{gaps}" stroke="#a32632" stroke-width="4" stroke-dasharray="3 5"/>',
+                f'<path d="{stops}" stroke="#a32632" stroke-width="6" stroke-linecap="round"/>',
+            ]
             caption = "Planned stops. Dotted red lines show spacing gaps. North is up."
-        else:
+        elif stage["mode"] == "satellite":
             g = stage["grid"]
-            lines = []
-            for x in range(g["x0"], g["x0"] + g["columns"] + 1):
-                lines.append(
-                    "M"
-                    + xy(coordinate(x * 256, g["y0"] * 256, g["zoom"]))
-                    + "L"
-                    + xy(coordinate(x * 256, (g["y0"] + g["rows"]) * 256, g["zoom"]))
-                )
-            for y in range(g["y0"], g["y0"] + g["rows"] + 1):
-                lines.append(
-                    "M"
-                    + xy(coordinate(g["x0"] * 256, y * 256, g["zoom"]))
-                    + "L"
-                    + xy(coordinate((g["x0"] + g["columns"]) * 256, y * 256, g["zoom"]))
-                )
-            drawing.append(f'<path d="{"".join(lines)}" stroke="#888" stroke-width="1"/>')
+            x0, y0, x1, y1, z = g["x0"], g["y0"], g["x0"] + g["columns"], g["y0"] + g["rows"], g["zoom"]
+            lines = [f"M{corner(x, y0, z)}L{corner(x, y1, z)}" for x in range(x0, x1 + 1)]
+            lines += [f"M{corner(x0, y, z)}L{corner(x1, y, z)}" for y in range(y0, y1 + 1)]
+            drawing = [f'<path d="{"".join(lines)}" stroke="#888" stroke-width="1"/>']
             caption = f"Satellite zoom {g['zoom']}, {g['columns']} × {g['rows']} patches. North is up."
-        drawing.append(
-            f'<rect x="25" y="45" width="{(right - left) * scale}" height="{(bottom - top) * scale}" stroke="#a32632"/>'
-        )
+        else:
+            continue
+        drawing.append(f'<rect x="25" y="45" width="{(right - left) * scale}" height="{(bottom - top) * scale}" stroke="#a32632"/>')
         svg = (
             f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 580" role="img">'
             f'<title>{caption}</title><rect width="900" height="580" fill="#faf8f4"/>'
@@ -480,51 +322,39 @@ def save_preview(run, folder):
 
 
 def download(run, folder, client, progress):
+    """Resume every stage, then export; a failed run keeps its checkpoint and partial exports."""
     run.update(state="running", exports_saved=False)
     run.pop("error", None)
     run.pop("finished_at", None)
-    saved_at, saved_count = time.monotonic(), 0
-    failure = None
+    errors = []
     try:
         write_json(folder / "manifest.json", run)
+        saved_at, unsaved = time.monotonic(), 0
         for stage in run["stages"]:
             if len(stage["results"]) == total(stage):
                 continue
-            if stage["mode"] != "osm":
-                label = "Street View" if stage["mode"] == "streetview" else "Satellite"
-                progress(label, len(stage["results"]), total(stage))
-            if stage["mode"] == "streetview":
-                work = capture_streets(stage, run, folder, client, progress)
-            elif stage["mode"] == "satellite":
-                work = capture_satellite(stage, folder, client, progress, run["options"]["satellite_format"])
-            else:
-                work = capture_osm(stage, run["bounds"], folder, client, progress)
-            for _ in work:
-                saved_count += 1
-                if stage["mode"] == "osm" or stage.get("full_sphere") or saved_count >= 50 or time.monotonic() - saved_at >= 30:
+            # Checkpoint slow items every time and quick ones in batches.
+            slow = stage["mode"] == "osm" or stage.get("full_sphere")
+            for _ in STAGES[stage["mode"]](stage, run, folder, client, progress):
+                unsaved += 1
+                if slow or unsaved >= 50 or time.monotonic() - saved_at >= 30:
                     write_json(folder / "manifest.json", run)
-                    saved_at, saved_count = time.monotonic(), 0
+                    saved_at, unsaved = time.monotonic(), 0
             write_json(folder / "manifest.json", run)
     except (Exception, KeyboardInterrupt) as error:
-        failure = error
-        run.update(
-            state="stopped" if isinstance(error, KeyboardInterrupt) else "failed",
-            error=str(error) or "Interrupted",
-        )
+        errors.append(error)
     try:
         export(run, folder, progress, rebuild=False)
     except (Exception, KeyboardInterrupt) as error:
-        if failure is None:
-            failure = error
-            run.update(state="stopped" if isinstance(error, KeyboardInterrupt) else "failed",
-                       error=str(error) or "Interrupted")
-        else:
-            run["error"] += f" Export also failed: {error}"
-    if failure is None:
+        errors.append(error)
+    if errors:
+        run.update(state="stopped" if isinstance(errors[0], KeyboardInterrupt) else "failed",
+                   error=" Export also failed: ".join(str(error) or "Interrupted" for error in errors))
+    else:
         run.update(state="complete", finished_at=now())
     write_json(folder / "manifest.json", run)
-    if failure is not None:
-        raise failure
+    if errors:
+        raise errors[0]
 
 
 def load(folder, *, check_files=True):
@@ -538,9 +368,7 @@ def load(folder, *, check_files=True):
         raise ValueError("Invalid saved stages.")
     for stage in run["stages"]:
         if stage["mode"] != "streetview":
-            zoom = options[
-                "satellite_zoom" if stage["mode"] == "satellite" else "terrain_zoom"
-            ]
+            zoom = options["satellite_zoom" if stage["mode"] == "satellite" else "terrain_zoom"]
             if stage["grid"] != grid(run["bounds"], zoom):
                 raise ValueError("Invalid saved tile grid.")
         if len(stage["results"]) > total(stage):
@@ -550,11 +378,10 @@ def load(folder, *, check_files=True):
         for result in stage["results"]:
             if result.get("status") == "skipped":
                 continue
-            name = result["filename"]
             try:
-                path = contained(folder, name)
+                path = contained(folder, result["filename"])
             except FileNotFoundError as error:
                 raise ValueError("Invalid output filename in checkpoint.") from error
             if not path.is_file():
-                raise ValueError(f"Missing saved file: {name}. Restore it before resuming.")
+                raise ValueError(f"Missing saved file: {result['filename']}. Restore it before resuming.")
     return run

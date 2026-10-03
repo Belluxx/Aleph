@@ -1,18 +1,15 @@
-"""Standalone, standard-library reader/extractor for sorted OSM snapshot PBFs.
+"""Standard-library reader/extractor for sorted OSM snapshot PBFs.
 
-Run: python src/pbf.py REGION.osm.pbf S W N E -o map.osm
 Schema: https://github.com/openstreetmap/OSM-binary/tree/master/osmpbf
 Supports raw/zlib blobs, ordinary/dense nodes, ways, relations and OSM metadata.
 """
 
-import argparse
 import bisect
 import math
 import os
 import re
 import struct
 import sys
-import tempfile
 import zlib
 from array import array
 from collections import defaultdict, deque
@@ -23,6 +20,8 @@ from itertools import accumulate, chain
 from multiprocessing import get_context
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
+
+from .common import atomic_path
 
 MAX_BLOB = 32 * 1024 * 1024
 MEMBERS = ("node", "way", "relation")
@@ -813,45 +812,19 @@ class PBF:
 
     def export(self, area, output):
         selected = self.select(area, xml=True)
-        output = Path(output)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix=f".{output.name}-", dir=output.parent)
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                south, west, north, east = area
-                stream.write((f'<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="Aleph">\n'
-                              f'<bounds minlat="{south}" minlon="{west}" maxlat="{north}" maxlon="{east}"/>\n').encode())
-                written = 0
-                for chunk in self.nodes(selected[0], "xml"):
-                    stream.write(chunk)
-                    written += chunk.count(b"<node ")
-                if written != len(selected[0]):
-                    raise ValueError("PBF extract contains incomplete way geometry.")
-                for _, chunk in self.way_xml.values():
-                    stream.write(chunk)
-                for item in self.relations(selected[2]):
-                    stream.write(xml_object(item).encode("utf-8"))
-                stream.write(b"</osm>\n")
+        south, west, north, east = area
+        with atomic_path(output) as temporary, temporary.open("wb") as stream:
+            stream.write((f'<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="Aleph">\n'
+                          f'<bounds minlat="{south}" minlon="{west}" maxlat="{north}" maxlon="{east}"/>\n').encode())
+            written = 0
+            for chunk in self.nodes(selected[0], "xml"):
+                stream.write(chunk)
+                written += chunk.count(b"<node ")
+            if written != len(selected[0]):
+                raise ValueError("PBF extract contains incomplete way geometry.")
+            for _, chunk in self.way_xml.values():
+                stream.write(chunk)
+            for item in self.relations(selected[2]):
+                stream.write(xml_object(item).encode("utf-8"))
+            stream.write(b"</osm>\n")
             self.cancel()
-            os.replace(name, output)
-        finally:
-            Path(name).unlink(missing_ok=True)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path)
-    parser.add_argument("bbox", nargs=4, type=float, metavar="COORD")
-    parser.add_argument("-o", "--output", type=Path, required=True)
-    args = parser.parse_args()
-    south, west, north, east = args.bbox
-    if not all(math.isfinite(v) for v in args.bbox) or not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
-        parser.error("Use a nonempty bounding box in south west north east order.")
-    try:
-        PBF(args.source).export(args.bbox, args.output)
-    except (OSError, ValueError, zlib.error, KeyError, IndexError) as error:
-        parser.exit(1, f"PBF extraction failed: {error}\n")
-
-
-if __name__ == "__main__":
-    main()

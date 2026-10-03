@@ -5,6 +5,8 @@ from bisect import bisect_right
 from collections import defaultdict
 from itertools import pairwise
 
+from .common import number, positive
+
 RADIUS = 6_371_008.8
 MERCATOR_RADIUS = 6_378_137
 MAX_LATITUDE = 85.0511287798066
@@ -36,42 +38,30 @@ def extent(points):
 def distance(a, b):
     lat1, lat2 = map(math.radians, (a[0], b[0]))
     delta = math.radians(b[1] - a[1])
-    h = (
-        math.sin((lat2 - lat1) / 2) ** 2
-        + math.cos(lat1) * math.cos(lat2) * math.sin(delta / 2) ** 2
-    )
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta / 2) ** 2
     return 2 * RADIUS * math.asin(math.sqrt(min(1, h)))
 
 
 def bearing(a, b):
     lat1, lat2 = map(math.radians, (a[0], b[0]))
     delta = math.radians(b[1] - a[1])
-    return (
-        math.degrees(
-            math.atan2(
-                math.sin(delta) * math.cos(lat2),
-                math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta),
-            )
-        )
-        % 360
-    )
+    y = math.sin(delta) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta)
+    return math.degrees(math.atan2(y, x)) % 360
 
 
 def destination(point, heading, meters):
     lat, lon = map(math.radians, point)
     angle, heading = meters / RADIUS, math.radians(heading)
-    end = math.asin(
-        clamp(
-            math.sin(lat) * math.cos(angle) + math.cos(lat) * math.sin(angle) * math.cos(heading),
-            -1,
-            1,
-        )
-    )
-    delta = math.atan2(
-        math.sin(heading) * math.sin(angle) * math.cos(lat),
-        math.cos(angle) - math.sin(lat) * math.sin(end),
-    )
+    end = math.asin(clamp(math.sin(lat) * math.cos(angle) + math.cos(lat) * math.sin(angle) * math.cos(heading), -1, 1))
+    delta = math.atan2(math.sin(heading) * math.sin(angle) * math.cos(lat),
+                       math.cos(angle) - math.sin(lat) * math.sin(end))
     return math.degrees(end), (math.degrees(lon + delta) + 180) % 360 - 180
+
+
+def point(values):
+    lat, lon = values
+    return number(lat, "latitude", -90, 90), number(lon, "longitude", -180, 180)
 
 
 def bounds(values, *, minimum=1):
@@ -89,6 +79,19 @@ def bounds(values, *, minimum=1):
     if size <= 0 or size < minimum:
         raise ValueError(f"The rectangle must be nonempty and at least {minimum} meter(s) wide and high.")
     return south, west, north, east
+
+
+def around(center, size):
+    """A square in ground meters, returned in south/west/north/east order."""
+    lat, lon = point(center)
+    positive(size, "size")
+    dy = math.degrees(size / (2 * RADIUS))
+    if abs(lat) + dy >= 90:
+        raise ValueError("The area cannot cross a pole.")
+    dx = dy / math.cos(math.radians(lat))
+    if lon - dx < -180 or lon + dx > 180:
+        raise ValueError("Split areas crossing the date line into two rectangles.")
+    return bounds((lat - dy, lon - dx, lat + dy, lon + dx), minimum=0)
 
 
 def inside(point, area):
@@ -111,10 +114,7 @@ def clip(a, b, area):
             leave = min(leave, q / p)
         if enter > leave:
             return None
-    start, end = [
-        (clamp(a[0] + t * dy, south, north), clamp(a[1] + t * dx, west, east))
-        for t in (enter, leave)
-    ]
+    start, end = [(clamp(a[0] + t * dy, south, north), clamp(a[1] + t * dx, west, east)) for t in (enter, leave)]
     return (start, end) if distance(start, end) > 0.01 else None
 
 
@@ -148,11 +148,8 @@ class Line:
             offset = RADIUS * math.atan2(math.sin(angle) * math.cos(delta), math.cos(angle))
             meters = clamp(self.cumulative[i] + offset, self.cumulative[i], self.cumulative[i + 1])
             separation = distance(self.at(meters), point)
-            if (
-                nearest is None
-                or separation < nearest[1] - 0.1
-                or (abs(separation - nearest[1]) <= 0.1 and meters < nearest[0])
-            ):
+            if (nearest is None or separation < nearest[1] - 0.1
+                    or (abs(separation - nearest[1]) <= 0.1 and meters < nearest[0])):
                 nearest = meters, separation
         return nearest
 
@@ -170,13 +167,8 @@ class RoadIndex:
                 lat, lon = destination(line.points[segment], heading, length / 2)
                 angle = (length / 2 + radius + 0.2) / RADIUS
                 dy = math.degrees(angle)
-                dx = (
-                    180
-                    if abs(lat) + dy >= 90
-                    else math.degrees(
-                        math.asin(clamp(math.sin(angle) / math.cos(math.radians(lat)), -1, 1))
-                    )
-                )
+                dx = 180 if abs(lat) + dy >= 90 else math.degrees(
+                    math.asin(clamp(math.sin(angle) / math.cos(math.radians(lat)), -1, 1)))
                 x0, x1 = (math.floor(x / self.size) for x in (lon - dx, lon + dx))
                 y0, y1 = (math.floor(y / self.size) for y in (lat - dy, lat + dy))
                 entry = road, segment
@@ -198,9 +190,7 @@ class RoadIndex:
 def pixel(point, zoom):
     size = 256 * 2**zoom
     latitude = math.radians(clamp(point[0], -MAX_LATITUDE, MAX_LATITUDE))
-    return (point[1] + 180) / 360 * size, clamp(
-        (1 - math.asinh(math.tan(latitude)) / math.pi) / 2 * size, 0, size
-    )
+    return (point[1] + 180) / 360 * size, clamp((1 - math.asinh(math.tan(latitude)) / math.pi) / 2 * size, 0, size)
 
 
 def coordinate(x, y, zoom):
@@ -221,25 +211,15 @@ def grid(area, zoom):
 
     left, top = (math.floor(snap(v)) for v in pixel((north, west), zoom))
     right, bottom = (math.ceil(snap(v)) for v in pixel((south, east), zoom))
-    return dict(
-        zoom=zoom,
-        left=left,
-        top=top,
-        width=right - left,
-        height=bottom - top,
-        x0=left // 256,
-        y0=top // 256,
-        columns=math.ceil(right / 256) - left // 256,
-        rows=math.ceil(bottom / 256) - top // 256,
-    )
+    return dict(zoom=zoom, left=left, top=top, width=right - left, height=bottom - top,
+                x0=left // 256, y0=top // 256,
+                columns=math.ceil(right / 256) - left // 256, rows=math.ceil(bottom / 256) - top // 256)
 
 
 def tiles(grid):
     for row in range(grid["rows"]):
         for column in range(grid["columns"]):
-            yield dict(
-                x=grid["x0"] + column, y=grid["y0"] + row, zoom=grid["zoom"], row=row, column=column
-            )
+            yield dict(x=grid["x0"] + column, y=grid["y0"] + row, zoom=grid["zoom"], row=row, column=column)
 
 
 def tile_ring(tile):
@@ -249,9 +229,7 @@ def tile_ring(tile):
 
 
 def feature(geometry, coordinates, properties):
-    return dict(
-        type="Feature", geometry=dict(type=geometry, coordinates=coordinates), properties=properties
-    )
+    return dict(type="Feature", geometry=dict(type=geometry, coordinates=coordinates), properties=properties)
 
 
 def collection(features):

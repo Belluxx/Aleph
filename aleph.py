@@ -10,7 +10,7 @@ from pathlib import Path
 
 from src import capture, places, quick
 from src.cli import parser
-from src.common import DEFAULT_CACHE, CachedClient, Client, Progress, RequestError, now
+from src.common import CachedClient, Client, Progress, RequestError, now
 from src.geo import MERCATOR_RADIUS, bounds
 
 
@@ -64,7 +64,7 @@ def proceed():
 
 def query(args, progress):
     """Dispatch quick requests; reject conflicting options before network access."""
-    client = CachedClient(args.cache_dir, delay=args.delay, refresh=args.refresh)
+    client = CachedClient(args.delay, cache_dir=args.cache_dir, refresh=args.refresh)
     if args.command == "resolve":
         if args.nearby and args.at is None:
             raise ValueError("--nearby requires --at LAT LON.")
@@ -108,7 +108,7 @@ def query(args, progress):
             operation = quick.satellite
         values = {key: getattr(args, key) for key in keys if getattr(args, key) is not None}
         result = operation(client, args.output, progress, endpoint=args.geocoder, **values)
-    result["cache"] = client.stats()
+    result["cache"] = dict(hits=client.hits, misses=client.misses)
     return result
 
 
@@ -123,10 +123,6 @@ def rows(headers, values, stream):
                             initial_indent=prefix, subsequent_indent=" " * len(prefix)), file=stream)
 
 
-def coordinates(point):
-    return f"{point[0]:.5f}, {point[1]:.5f}"
-
-
 def place_rows(items, stream, *, locations=False):
     values = []
     for item in items:
@@ -135,17 +131,16 @@ def place_rows(items, stream, *, locations=False):
         kind = ", ".join(category.split(":", 1)[-1].replace("_", " ") for category in categories)
         description = name + (f" ({kind})" if kind else "")
         if locations:
-            description += f" · {coordinates((item['lat'], item['lon']))}"
+            description += f" · {item['lat']:.5f}, {item['lon']:.5f}"
             if "distance_m" in item:
                 description += f" · {item['distance_m']:.0f} m away"
         values.append((item["id"], description))
     rows(("ID", "PLACE"), values, stream)
 
 
-def error_details(code, details):
-    candidates = details.get("candidates", [])
-    if code == "ambiguous_place" and candidates:
-        place_rows(candidates, sys.stderr)
+def error_details(details):
+    if details.get("candidates"):
+        place_rows(details["candidates"], sys.stderr)
     if details.get("gaps"):
         count = len(details["gaps"])
         print(f"  Missing coverage at {count} {'stop' if count == 1 else 'stops'}.", file=sys.stderr)
@@ -190,31 +185,29 @@ def main(argv=None):
             return 0
         args = command.parse_args(argv)
         if args.command == "dashboard":
-            if not 1 <= args.port <= 65535:
-                command.error("--port must be from 1 to 65535")
             from src.dashboard import serve
 
             serve(args.root, args.port, open_browser=not args.no_browser)
             return 0
-        if args.command in ("resolve", "streetview", "satellite"):
+        if args.command != "capture":
             with Progress() as progress:
                 result = query(args, progress)
             if as_json and result["status"] == "partial":
                 print(f"Saved {result['saved_stops']} of {result['requested_stops']} requested stops; see result.json for gaps.", file=sys.stderr)
             emit(result, as_json)
             return 0
+
         action = args.action
-        if action in ("resume", "export"):
+        if action == "create":
+            client = Client(args.delay, cache_dir=args.cache_dir, refresh=args.refresh)
+            options = {key: getattr(args, key) for key in capture.DEFAULT_OPTIONS}
+            with Progress() as progress:
+                run = capture.plan(client, bounds(args.bbox), options, progress)
+        else:
             folder = args.folder.expanduser().resolve()
             run = capture.load(folder)
-            client = Client(run["options"]["delay"], cache_dir=getattr(args, "cache_dir", DEFAULT_CACHE),
-                            refresh=getattr(args, "refresh", False))
-        else:
-            area = bounds(args.bbox)
-            options = {key: getattr(args, key) for key in capture.DEFAULT_OPTIONS}
-            client = Client(args.delay, cache_dir=args.cache_dir, refresh=args.refresh)
-            with Progress() as progress:
-                run = capture.plan(client, area, options, progress)
+            if action == "resume":
+                client = Client(run["options"]["delay"], cache_dir=args.cache_dir, refresh=args.refresh)
         save_only = action == "create" and args.plan
         if action != "export":
             describe(run)
@@ -235,9 +228,7 @@ def main(argv=None):
         else:
             with Progress() as progress:
                 capture.download(run, folder, client, progress)
-            skipped = sum(
-                p.get("status") == "skipped" for stage in run["stages"] for p in stage["results"]
-            )
+            skipped = sum(p.get("status") == "skipped" for stage in run["stages"] for p in stage["results"])
             if skipped:
                 print(style(f"Skipped {skipped:,} unavailable Street View {'photo' if skipped == 1 else 'photos'}.", "33"),
                       file=sys.stderr)
@@ -248,15 +239,8 @@ def main(argv=None):
         emit(result, as_json)
         return 0
     except KeyboardInterrupt:
-        print(
-            "Stopped."
-            + (
-                f" Resume with: alephgeo capture resume '{folder}'"
-                if folder
-                else " Planning can be started again."
-            ),
-            file=sys.stderr,
-        )
+        hint = f" Resume with: alephgeo capture resume '{folder}'" if folder else " Planning can be started again."
+        print("Stopped." + hint, file=sys.stderr)
         if as_json:
             emit(dict(status="error", error=dict(code="interrupted", message="Stopped."),
                       folder=str(folder) if folder else None), True)
@@ -268,18 +252,12 @@ def main(argv=None):
         if folder:
             details = dict(details, folder=str(folder))
         print(f"{style('alephgeo:', '31')} {error}", file=sys.stderr)
-        if folder and as_json:
-            print(
-                f"Saved run: {folder}\nUse 'capture resume' to retry, or 'capture export' to rebuild saved outputs.",
-                file=sys.stderr,
-            )
         if as_json:
             emit(dict(status="error", error=dict(code=code, message=str(error), **details)), True)
         else:
-            error_details(code, details)
-            if folder:
-                print("Use 'capture resume' to retry, or 'capture export' to rebuild saved outputs.",
-                      file=sys.stderr)
+            error_details(details)
+        if folder:
+            print("Use 'capture resume' to retry, or 'capture export' to rebuild saved outputs.", file=sys.stderr)
         return {"interrupted": 130, "invalid_arguments": 2}.get(code, 1)
 
 

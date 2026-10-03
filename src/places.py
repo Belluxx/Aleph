@@ -1,50 +1,17 @@
 """Place search, reverse lookup, and nearby OSM points of interest."""
 
 import json
-import math
 from urllib.parse import urlsplit
 
-from .common import RequestError, url
-from .geo import RADIUS, bounds, distance
+from .common import APP_AGENT, RequestError, number, url
+from .geo import around, distance, point
 from .osm import POI_KEYS
 
 GEOCODER = "https://photon.komoot.io"
 
 
-def number(value, name, low, high):
-    if not math.isfinite(value) or not low <= value <= high:
-        raise ValueError(f"{name} must be from {low} to {high}.")
-    return value
-
-
-def positive(value, name):
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} must be a positive finite number.")
-    return value
-
-
-def point(values):
-    lat, lon = values
-    number(lat, "latitude", -90, 90)
-    number(lon, "longitude", -180, 180)
-    return lat, lon
-
-
-def around(center, size):
-    """A square in ground meters, returned in south/west/north/east order."""
-    lat, lon = point(center)
-    positive(size, "size")
-    dy = math.degrees(size / (2 * RADIUS))
-    if abs(lat) + dy >= 90:
-        raise ValueError("The area cannot cross a pole.")
-    dx = dy / math.cos(math.radians(lat))
-    if lon - dx < -180 or lon + dx > 180:
-        raise ValueError("Split areas crossing the date line into two rectangles.")
-    return bounds((lat - dy, lon - dx, lat + dy, lon + dx), minimum=0)
-
-
 def geocode(client, *, query=None, at=None, limit=5, street=False, endpoint=GEOCODER):
-    number(limit, "limit", 1, 50)
+    number(limit, "limit", 1, 50, whole=True)
     endpoint = endpoint.rstrip("/")
     address = urlsplit(endpoint)
     if address.scheme not in ("http", "https") or not address.netloc:
@@ -61,7 +28,7 @@ def geocode(client, *, query=None, at=None, limit=5, street=False, endpoint=GEOC
         params["lat"], params["lon"] = point(at)
         path = "/reverse/"
     try:
-        data = json.loads(client.get(url(endpoint + path, **params), user_agent="Aleph/1.0"))
+        data = json.loads(client.get(url(endpoint + path, **params), user_agent=APP_AGENT))
     except (OSError, ValueError) as error:
         raise RequestError("provider_unavailable", f"Geocoder request failed: {error}") from error
     if not isinstance(data.get("features"), list):
@@ -105,7 +72,7 @@ def choose(client, query, *, match=None, best_match=False, street=False, endpoin
 def nearby(client, at, *, radius=100, limit=10, progress=lambda *args: None):
     lat, lon = point(at)
     number(radius, "radius", 1, 5000)
-    number(limit, "limit", 1, 50)
+    number(limit, "limit", 1, 50, whole=True)
     items, metadata = client.maps.data(around((lat, lon), radius * 2), poi=True, progress=progress)
     results = []
     for item in items:

@@ -35,9 +35,7 @@ class TIFF:
             raw = entry[8 : 8 + size] if size <= 4 else self.read(location, size)
             self.tags[code] = kind, length, raw
         required = {258: 32, 339: 3, 277: 1, 262: 1}
-        if any(self.value(key) != value for key, value in required.items()) or self.value(
-            259
-        ) not in (1, 8, 32946):
+        if any(self.value(key) != value for key, value in required.items()) or self.value(259) not in (1, 8, 32946):
             raise ValueError("Expected tiled Float32 terrain.")
         if (self.value(322), self.value(323)) not in ((256, 256), (512, 512)):
             raise ValueError("Expected 256- or 512-pixel terrain blocks.")
@@ -46,11 +44,7 @@ class TIFF:
         if any(key not in self.tags for key in (33550, 33922, 34735, 42113, 324, 325)):
             raise ValueError("Missing terrain georeferencing or blocks.")
         keys = self.values(34735)
-        self.keys = {
-            keys[i]: keys[i + 3]
-            for i in range(4, len(keys) - 3, 4)
-            if keys[i + 1 : i + 3] == (0, 1)
-        }
+        self.keys = {keys[i]: keys[i + 3] for i in range(4, len(keys) - 3, 4) if keys[i + 1:i + 3] == (0, 1)}
         if self.keys.get(3072) != 3857 or self.keys.get(1025) not in (1, 2):
             raise ValueError("Expected EPSG:3857 terrain.")
 
@@ -107,9 +101,7 @@ class TIFF:
 
 
 def header(tags, order):
-    directory = bytearray(
-        (b"II" if order == "<" else b"MM") + struct.pack(order + "HIH", 42, 8, len(tags))
-    )
+    directory = bytearray((b"II" if order == "<" else b"MM") + struct.pack(order + "HIH", 42, 8, len(tags)))
     data = bytearray()
     start = 8 + 2 + len(tags) * 12 + 4
     for code, (kind, count, raw) in sorted(tags.items()):
@@ -133,15 +125,10 @@ def origin(source, tile):
 def validate(source, tile):
     scale, west, north = origin(source, tile)
     pixel, tie = source.values(33550), source.values(33922)
-    if not (
-        (source.value(256), source.value(257)) == (512, 512)
-        and len(pixel) == 3 and len(tie) == 6
-        and all(math.isfinite(v) for v in pixel + tie)
-        and all(abs(pixel[i] - scale) <= scale * 1e-8 for i in (0, 1))
-        and tie[:3] == (0, 0, 0)
-        and abs(tie[3] - west) <= scale * 1e-5
-        and abs(tie[4] - north) <= scale * 1e-5
-    ):
+    if not ((source.value(256), source.value(257)) == (512, 512) and len(pixel) == 3 and len(tie) == 6
+            and all(math.isfinite(v) for v in pixel + tie)
+            and all(abs(pixel[i] - scale) <= scale * 1e-8 for i in (0, 1))
+            and tie[:3] == (0, 0, 0) and abs(tie[3] - west) <= scale * 1e-5 and abs(tie[4] - north) <= scale * 1e-5):
         raise ValueError("Terrain georeferencing does not match the download grid.")
     offsets, sizes = source.values(324), source.values(325)
     count = (512 // source.value(322)) ** 2

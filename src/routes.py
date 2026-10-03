@@ -56,12 +56,6 @@ def chains(ways):
     return routes
 
 
-def describe(route, index):
-    return dict(route=index, start=list(route["points"][0]), end=list(route["points"][-1]),
-                length_m=round(route["length_m"], 2), way_ids=route["way_ids"],
-                closed=route["points"][0] == route["points"][-1])
-
-
 def allocate_stops(sections, stops):
     """Divide a total stop count by section length, rounding largest remainders up."""
     lengths = [Line(section["points"]).length for section in sections]
@@ -107,9 +101,12 @@ def resolve(client, place, *, route=None, reverse=False, progress=lambda *args: 
     for index, section in enumerate(options, 1):
         if route is not None and index != route:
             continue
+        points = section["points"]
         if reverse:
-            section["points"].reverse()
-        section.update(describe(section, index), name=name, scope="connected_same_name_ways")
+            points.reverse()
+        section.update(route=index, start=list(points[0]), end=list(points[-1]),
+                       length_m=round(section["length_m"], 2), closed=points[0] == points[-1],
+                       name=name, scope="connected_same_name_ways")
         selected.append(section)
     return selected
 

@@ -11,10 +11,13 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import cached_property
+from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
+
+from PIL import Image
 
 DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "aleph"
 APP_AGENT = "Aleph/0.1"
@@ -40,6 +43,44 @@ def now():
 
 def url(base, **params):
     return base + "?" + urlencode(params)
+
+
+def number(value, name, low=-math.inf, high=math.inf, *, whole=False):
+    """Check a number from JSON or the command line; whole numbers come back as int."""
+    if (type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high
+            or (whole and value != int(value))):
+        kind = "a whole number" if whole else "a number"
+        if math.isfinite(high):
+            kind += f" from {low:g} to {high:g}"
+        elif math.isfinite(low):
+            kind += f" of at least {low:g}"
+        raise ValueError(f"{name}: use {kind}.")
+    return int(value) if whole else value
+
+
+def positive(value, name):
+    if number(value, name) <= 0:
+        raise ValueError(f"{name}: use a positive number.")
+    return value
+
+
+def open_image(data, size):
+    """Decode a provider JPEG or PNG, rejecting anything of an unexpected size."""
+    image = Image.open(BytesIO(data))
+    try:
+        if image.format not in ("JPEG", "PNG") or image.size != size:
+            raise ValueError(f"Expected a JPEG or PNG image of {size[0]} × {size[1]} pixels.")
+        image.load()
+        return image
+    except BaseException:
+        image.close()
+        raise
+
+
+def save_image(image, path, quality):
+    """Save atomically, choosing PNG or JPEG from the file extension."""
+    with atomic_path(path) as temporary:
+        image.save(temporary, format="PNG" if Path(path).suffix == ".png" else "JPEG", quality=quality)
 
 
 def contained(parent, name):
@@ -85,9 +126,7 @@ class Client:
             if self.request_log:
                 self.request_log("GET", address, attempt)
             try:
-                with urlopen(
-                    Request(address, headers={"User-Agent": user_agent}), timeout=timeout
-                ) as response:
+                with urlopen(Request(address, headers={"User-Agent": user_agent}), timeout=timeout) as response:
                     if destination is None:
                         result = response.read()
                     else:
@@ -116,9 +155,7 @@ class Client:
                 if attempt < 3:
                     continue
                 if isinstance(error, HTTPError):
-                    raise OSError(
-                        f"{urlsplit(address).hostname}: HTTP {error.code}. Resume to retry."
-                    ) from error
+                    raise OSError(f"{urlsplit(address).hostname}: HTTP {error.code}. Resume to retry.") from error
                 raise
             finally:
                 self.finished = time.monotonic()
@@ -127,10 +164,7 @@ class Client:
 class CachedClient(Client):
     """Cache successful quick-query responses for one week."""
 
-    def __init__(self, directory, *, delay=0, refresh=False):
-        super().__init__(delay=delay, cache_dir=directory, refresh=refresh)
-        self.hits = 0
-        self.misses = 0
+    hits = misses = 0
 
     def get(self, address, **kwargs):
         if kwargs.get("destination") is not None:
@@ -144,9 +178,6 @@ class CachedClient(Client):
         write_bytes(path, result)
         self.misses += 1
         return result
-
-    def stats(self):
-        return dict(hits=self.hits, misses=self.misses)
 
 
 class Progress:
@@ -191,16 +222,10 @@ class Progress:
             if done >= total:
                 eta = "00:00"
             elif done > self.initial:
-                seconds = math.ceil(
-                    (current - self.started) / (done - self.initial) * (total - done)
-                )
+                seconds = math.ceil((current - self.started) / (done - self.initial) * (total - done))
                 minutes, seconds = divmod(seconds, 60)
                 hours, minutes = divmod(minutes, 60)
-                eta = (
-                    f"{hours}:{minutes:02d}:{seconds:02d}"
-                    if hours
-                    else f"{minutes:02d}:{seconds:02d}"
-                )
+                eta = f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
 
         percent = f"{math.floor(fraction * 100)}%" if total is not None else "—%"
         prefix = f"{phase} ["
@@ -212,12 +237,7 @@ class Progress:
         self.line = prefix + bar + suffix
         if self.terminal:
             self.line = self.line[:columns]
-            print(
-                "\r" + self.line.ljust(min(self.width, columns)),
-                end="",
-                file=self.stream,
-                flush=True,
-            )
+            print("\r" + self.line.ljust(min(self.width, columns)), end="", file=self.stream, flush=True)
             self.width = len(self.line)
         self.printed = current
 

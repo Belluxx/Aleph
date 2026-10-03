@@ -114,7 +114,7 @@ class CaptureTests(unittest.TestCase):
             bounds=[44.99, 8.99, 45.01, 9.01],
             options=capture.settings({"include": ["streetview"]}),
             state="planned", stages=[dict(
-                mode="streetview", results=[],
+                mode="streetview", full_sphere=False, results=[],
                 paths=[dict(id="way-1-1", name="Test street", osm_id=1, highway="residential", layer="0")],
                 samples=[dict(pano_id="test_panorama_123", lat=45.0, lon=9.0,
                               heading=350, path_index=0, stop_in_path=1)],
@@ -210,7 +210,7 @@ class CaptureTests(unittest.TestCase):
                 client = Mock()
                 client.get.side_effect = [sphere_metadata(), tile]
                 if state == "failed":
-                    with self.assertRaisesRegex(ValueError, "panorama tile"):
+                    with self.assertRaisesRegex(ValueError, "4 × 2 pixels"):
                         capture.download(run, self.folder, client, self.progress)
                 else:
                     capture.download(run, self.folder, client, self.progress)
