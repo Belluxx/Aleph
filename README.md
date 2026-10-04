@@ -23,7 +23,7 @@ This was born as a way to let LLMs quickly gather information from the physical 
 
 ## Install
 
-Requires Python 3.11+. Pillow is the only dependency. No API keys are required.
+Requires Python 3.11+. The only dependencies are Pillow and numpy. No API keys are required.
 
 ```sh
 git clone https://github.com/Belluxx/Aleph.git

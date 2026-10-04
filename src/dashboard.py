@@ -123,7 +123,7 @@ def summary(identity, run, live):
         if stage["mode"] in ("streetview", "mesh"):
             info["skipped"] = sum(result.get("status") == "skipped" for result in results[:count])
         if "grid" in stage:
-            info["zoom"] = stage["grid"]["zoom"]
+            info.update(zoom=stage["grid"]["zoom"], minzoom=layers.lowest(stage))
     state = "interrupted" if run["state"] == "running" and not live else run["state"]
     return dict(id=identity, bounds=run["bounds"], started_at=run["started_at"], finished_at=run.get("finished_at"),
                 state=state, error=run.get("error"), options=run["options"], stages=stages)
@@ -282,11 +282,12 @@ class Dashboard:
 
     def tile(self, identity, mode, z, x, y):
         folder, stage, _ = self.stage(identity, mode)
-        tile = self.tiles.get(folder, stage, int(z), int(x), int(y.split(".")[0]))
+        z = int(z)
+        tile = self.tiles.get(folder, stage, z, int(x), int(y.split(".")[0]))
         if tile is None:
             raise FileNotFoundError("No saved tile here.")
-        # Tile URLs carry the saved count, so a response never changes.
-        return *tile, 86400
+        # Saved patches never change. Built tiles are not cached, so rendering changes show up at once.
+        return *tile, 86400 if mode == "satellite" and z == stage["grid"]["zoom"] else 0
 
     def file(self, identity, path):
         target = contained(self.folder(identity), "/".join(path))
@@ -303,7 +304,7 @@ class Dashboard:
             case "GET", [("app.js" | "style.css") as name]:
                 return (WEB / name).read_bytes(), mimetypes.guess_type(name)[0], 0
             case "GET", ["api", "config"]:
-                return dict(root=str(self.root), defaults=capture.DEFAULT_OPTIONS, overviews=layers.OVERVIEWS)
+                return dict(root=str(self.root), defaults=capture.DEFAULT_OPTIONS)
             case "GET", ["api", "job"]:
                 return self.job_state()
             case "GET", ["api", "preview"]:
@@ -325,8 +326,10 @@ class Dashboard:
                 return self.photos(identity, int(query.get("after", ["0"])[0]))
             case "GET", ["api", "captures", identity, "osm"]:
                 return self.osm_layer(identity)
-            case "GET", ["api", "captures", identity, ("satellite" | "terrain") as mode, z, x, y]:
-                return self.tile(identity, mode, z, x, y)
+            case "GET", ["api", "captures", identity, "satellite", z, x, y]:
+                return self.tile(identity, "satellite", z, x, y)
+            case "GET", ["api", "captures", identity, "hillshade", z, x, y]:
+                return self.tile(identity, "terrain", z, x, y)
             case "GET", ["api", "captures", identity, "files", *path] if path:
                 return self.file(identity, path)
             case "POST", ["api", "estimate"]:

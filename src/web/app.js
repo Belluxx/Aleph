@@ -288,19 +288,19 @@ function setData(source, data) {
 
 // Rasters are added once a capture has saved tiles; their URLs carry the saved count.
 function setRaster(mode, info) {
-  const tiles = [absolute(capturePath(state.capture.id, `/${mode}/{z}/{x}/{y}?v=${info.done}`))];
+  const path = mode === "terrain" ? "hillshade" : mode;
+  const tiles = [absolute(capturePath(state.capture.id, `/${path}/{z}/{x}/{y}?v=${info.done}`))];
   const source = map.getSource(mode);
   if (source) return source.setTiles(tiles);
   const [s, w, n, e] = state.capture.bounds;
-  const spec = {tiles, bounds: [w, s, e, n], minzoom: Math.max(0, info.zoom - state.config.overviews), maxzoom: info.zoom};
+  const spec = {tiles, bounds: [w, s, e, n], minzoom: info.minzoom, maxzoom: info.zoom};
   if (mode === "satellite") {
     map.addSource(mode, {type: "raster", tileSize: 256, ...spec});
     addLayer({id: "satellite", type: "raster", source: mode, paint: {"raster-fade-duration": 0}}, "osm-land");
   } else {
-    map.addSource(mode, {type: "raster-dem", encoding: "terrarium", tileSize: 512, ...spec});
-    addLayer({id: "hillshade", type: "hillshade", source: mode, paint: {
-      "hillshade-shadow-color": "--hill-shadow", "hillshade-highlight-color": "--hill-light",
-      "hillshade-accent-color": "--hill-shadow", "hillshade-exaggeration": 0.55}}, "osm-land");
+    // The server shades terrain itself, so tiles stay transparent where heights are missing.
+    map.addSource(mode, {type: "raster", tileSize: 512, ...spec});
+    addLayer({id: "hillshade", type: "raster", source: mode, paint: {"raster-fade-duration": 0}}, "osm-land");
   }
   syncMap();
 }
@@ -620,7 +620,7 @@ function refresh(stages, force = false) {
     if (!force && info.done < info.total && Date.now() - (live[`${mode}At`] || 0) < 2500) continue;
     live[mode] = info.done;
     live[`${mode}At`] = Date.now();
-    setRaster(mode, {...info, zoom: info.zoom ?? state.capture.stages[mode].zoom});
+    setRaster(mode, {...state.capture.stages[mode], ...info});
   }
   if (stages.osm?.done && !live.osm) {
     live.osm = true;

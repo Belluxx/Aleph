@@ -198,9 +198,16 @@ class TerrainTests(unittest.TestCase):
                 with (folder / "terrain.tif").open("rb") as stream:
                     merged = terrain.TIFF(stream)
                     self.assertEqual((merged.value(258), merged.value(317)), (16, 2))
-                # The dashboard decodes saved tiles itself and encodes them as Terrarium RGB.
-                with layers.heights(folder / "8.tif") as decoded, layers.terrarium(decoded) as rgb:
+                # The dashboard decodes saved tiles itself to shade them.
+                with layers.heights(folder / "8.tif") as decoded:
                     self.assertEqual(list(struct.unpack(f"={512 * 512}f", decoded.tobytes())), heights)
-                    pixels = rgb.tobytes()
-                    self.assertEqual([pixels[i] * 256 + pixels[i + 1] + pixels[i + 2] / 256 - 32768
-                                      for i in range(0, len(pixels), 3)], heights)
+
+    def test_hillshade_is_transparent_without_heights(self):
+        # Overviews mix saved and missing heights; shading the missing ones drew straight lines on the map.
+        center = Image.new("F", (8, 8))
+        center.putdata([layers.NODATA if x < 4 else x * 10 for _ in range(8) for x in range(8)])
+        with layers.hillshade(center, [None] * 4, 1, 1) as shaded, shaded.getchannel("A") as alpha:
+            self.assertTrue(all(alpha.getpixel((x, y)) == 0 for x in range(5) for y in range(8)))
+            self.assertTrue(all(alpha.getpixel((x, y)) > 0 for x in (5, 6) for y in range(1, 7)))
+        with layers.hillshade(Image.new("F", (8, 8), 300), [None] * 4, 1, 1) as flat:
+            self.assertEqual(flat.getchannel("A").getextrema(), (0, 0))
