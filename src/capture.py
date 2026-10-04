@@ -14,10 +14,10 @@ from . import mesh, satellite, streetview, terrain
 from .common import WORKERS, MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
 from .geo import MERCATOR_RADIUS, bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
 
-SOURCES = ("streetview", "satellite", "osm", "mesh")
-FORMAT_VERSION = 4
+SOURCES = ("streetview", "satellite", "osm", "terrain", "mesh")
+FORMAT_VERSION = 5
 DEFAULT_OPTIONS = dict(
-    include=["streetview", "satellite", "osm"], step=30, fov=75, depth="roads", streetview_format="jpg",
+    include=["streetview", "satellite", "osm", "terrain"], step=30, fov=75, depth="roads", streetview_format="jpg",
     full_sphere=False, sphere_zoom=3,
     delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14, mesh_level=21,
     streetview_workers=WORKERS, satellite_workers=WORKERS, terrain_workers=WORKERS, mesh_workers=WORKERS,
@@ -76,7 +76,7 @@ def settings(values=None):
     options = {**DEFAULT_OPTIONS, **values}
     include = options["include"]
     if not isinstance(include, list) or not include or any(source not in SOURCES for source in include):
-        raise ValueError("Choose one or more sources: streetview, satellite, osm, mesh.")
+        raise ValueError("Choose one or more sources: streetview, satellite, osm, terrain, mesh.")
     options["include"] = [source for source in SOURCES if source in include]
     positive(options["step"], "step")
     number(options["delay"], "delay", 0)
@@ -92,11 +92,6 @@ def settings(values=None):
         if options[key] not in ("jpg", "png"):
             raise ValueError(f"{key}: choose jpg or png.")
     return options
-
-
-def modes(include):
-    """Stage modes for the selected sources; osm also downloads terrain."""
-    return [mode for source in include for mode in (("osm", "terrain") if source == "osm" else (source,))]
 
 
 def create_folder(run, parent):
@@ -118,6 +113,7 @@ def plan(client, area, options, progress):
         stages.append(dict(mode="satellite", grid=grid(area, options["satellite_zoom"]), results=[]))
     if "osm" in options["include"]:
         stages.append(dict(mode="osm", results=[], notes=OSM_NOTES))
+    if "terrain" in options["include"]:
         stages.append(dict(mode="terrain", grid=grid(area, options["terrain_zoom"]), results=[], notes=TERRAIN_NOTES))
     if "mesh" in options["include"]:
         stage = mesh.plan(client, area, options["mesh_level"], options["mesh_workers"], progress,
@@ -323,7 +319,7 @@ def export(run, folder, progress, *, rebuild=True):
 
 def save_preview(run, folder):
     """Write the README, planned street paths, and a north-up plan.svg per imagery stage."""
-    if run["options"]["include"] == ["osm"]:
+    if set(run["options"]["include"]) <= {"osm", "terrain"}:
         return
     write_bytes(folder / "README.txt", README)
     area = run["bounds"]
@@ -395,7 +391,7 @@ def download(run, folder, client, progress):
             except (OSError, ValueError) as error:
                 if stage["mode"] != "osm":
                     raise
-                # Keep terrain usable if the map fails; report the error after saving it.
+                # Keep the other sources going if the map fails; report the error after saving it.
                 errors.append(error)
             write_json(folder / "manifest.json", run)
     except (Exception, KeyboardInterrupt) as error:
@@ -421,7 +417,7 @@ def load(folder, *, check_files=True):
         raise ValueError("Unsupported capture format. Start a new capture with this version of Aleph.")
     bounds(run["bounds"], minimum=0)
     options = settings(run["options"])
-    if [s["mode"] for s in run["stages"]] != modes(options["include"]):
+    if [s["mode"] for s in run["stages"]] != options["include"]:
         raise ValueError("Invalid saved stages.")
     for stage in run["stages"]:
         if stage["mode"] in ("satellite", "terrain"):

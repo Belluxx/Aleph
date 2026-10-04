@@ -143,7 +143,7 @@ def _capture_command(commands):
     actions = captures.add_subparsers(dest="action", required=True)
     area = actions.add_parser("create", help="Plan and download an area with multiple sources")
     area.add_argument("--bbox", required=True, nargs=4, type=float, metavar=("S", "W", "N", "E"))
-    area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: streetview satellite osm; osm includes terrain)")
+    area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: streetview satellite osm terrain)")
 
     # Planning and confirmation.
     planning = area.add_mutually_exclusive_group()

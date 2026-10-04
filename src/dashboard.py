@@ -332,8 +332,8 @@ class Dashboard:
             case "POST", ["api", "estimate"]:
                 area, options = area_and_options(body)
                 result = {}
-                for mode, source in (("satellite", "satellite"), ("terrain", "osm")):
-                    if source in options["include"]:
+                for mode in ("satellite", "terrain"):
+                    if mode in options["include"]:
                         stage = dict(mode=mode, grid=grid(area, options[f"{mode}_zoom"]), results=[])
                         result[mode] = dict(imagery(area, stage, 512 if mode == "terrain" else 256),
                                             seconds=capture.estimate(dict(stages=[stage], options=options))["seconds"])

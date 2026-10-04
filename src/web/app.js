@@ -113,6 +113,7 @@ const state = {
   drag: null,
   preview: null,
   planError: null,
+  watched: null,  // Id of the job whose end this page still has to handle.
   captureId: null,
   capture: null,
   photos: [],
@@ -426,10 +427,10 @@ function estimate() {
   estimateTimer = setTimeout(async () => {
     const count = ++estimateCount;
     const {include, satellite_zoom, terrain_zoom, satellite_workers, terrain_workers, delay} = readForm();
-    const outputs = {satellite: $("[data-source=satellite] .estimate"), osm: $("[data-source=osm] .estimate")};
+    const outputs = {satellite: $("[data-source=satellite] .estimate"), terrain: $("[data-source=terrain] .estimate")};
     const details = {satellite: $("[data-detail=satellite]"), terrain: $("[data-detail=terrain]")};
     let result = {};
-    if (state.area && (include.includes("satellite") || include.includes("osm"))) {
+    if (state.area && (include.includes("satellite") || include.includes("terrain"))) {
       try {
         result = await api("/api/estimate", {bounds: state.area, options:
           {include, satellite_zoom, terrain_zoom, satellite_workers, terrain_workers, delay}});
@@ -442,7 +443,7 @@ function estimate() {
     outputs.satellite.textContent = satellite ? `${plural(satellite.tiles, "tile")} · ~${duration(satellite.seconds)}` : "";
     details.satellite.textContent = satellite
       ? `${resolution(satellite.meters_per_pixel)} · ${number(satellite.width)} × ${number(satellite.height)} px` : "";
-    outputs.osm.textContent = terrain ? `${plural(terrain.tiles, "terrain tile")}` : "";
+    outputs.terrain.textContent = terrain ? `${plural(terrain.tiles, "tile")} · ~${duration(terrain.seconds)}` : "";
     details.terrain.textContent = terrain ? `${resolution(terrain.meters_per_pixel)} elevation` : "";
   }, 120);
 }
@@ -564,6 +565,7 @@ async function previewPlan(event) {
   setData("plan", EMPTY);
   try {
     state.job = await api("/api/plan", {bounds: state.area, options: readForm()});
+    state.watched = state.job.id;
   } catch (failure) {
     error.textContent = failure.message;
     error.hidden = false;
@@ -773,9 +775,11 @@ async function poll() {
     pollTimer = setTimeout(poll, 3000);
     return;
   }
-  const previous = state.job;
   state.job = job;
-  const finished = job && job.state !== "running" && previous?.id === job.id && previous.state === "running";
+  if (job?.state === "running") state.watched = job.id;
+  // Small plans can end before the first poll, so match the job this page started rather than a state change.
+  const finished = !!job && job.state !== "running" && state.watched === job.id;
+  if (finished) state.watched = null;
   if (job?.kind === "plan" && finished) {
     if (job.state === "done") {
       try {
@@ -829,7 +833,7 @@ function route() {
     estimate();
     if (!state.area) setDrawing(true);
   } else if (view === "preview") {
-    if (!state.preview && !running("plan")) {
+    if (!state.preview && !state.planError && !running("plan") && state.watched !== state.job?.id) {
       location.replace("#/new");
       return;
     }
@@ -879,6 +883,7 @@ function bind() {
     $("#start").disabled = true;
     try {
       state.job = await api("/api/capture", {plan: state.preview.plan});
+      state.watched = state.job.id;
       state.preview = null;
       location.hash = `#/capture/${encodeURIComponent(state.job.capture)}`;
       poll();
@@ -912,6 +917,7 @@ function bind() {
   $("#resume").addEventListener("click", async () => {
     try {
       state.job = await api(capturePath(state.capture.id, "/resume"), {});
+      state.watched = state.job.id;
       renderCapture();
       poll();
     } catch (error) {

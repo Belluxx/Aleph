@@ -115,10 +115,16 @@
           </fieldset>
 
           <fieldset class="source" data-source="osm">
-            <label class="source-head"><input type="checkbox" name="include" value="osm"><i data-icon="osm"></i><span>OSM map + terrain</span><output class="estimate"></output></label>
+            <label class="source-head"><input type="checkbox" name="include" value="osm"><i data-icon="osm"></i><span>OSM map</span><output class="estimate"></output></label>
             <div class="fields">
-              <p class="detail">OpenStreetMap data clipped to the area, and elevation tiles.</p>
-              <label class="field slider"><span>Terrain zoom</span><span class="range"><input type="range" name="terrain_zoom" min="8" max="14" step="1"><b class="knob"></b><output class="tag"></output></span></label>
+              <p class="detail">OpenStreetMap data clipped to the area. The first capture in a region downloads its Geofabrik file, which can be hundreds of MB.</p>
+            </div>
+          </fieldset>
+
+          <fieldset class="source" data-source="terrain">
+            <label class="source-head"><input type="checkbox" name="include" value="terrain"><i data-icon="terrain"></i><span>Terrain</span><output class="estimate"></output></label>
+            <div class="fields">
+              <label class="field slider"><span>Zoom</span><span class="range"><input type="range" name="terrain_zoom" min="8" max="14" step="1"><b class="knob"></b><output class="tag"></output></span></label>
               <p class="detail" data-detail="terrain"></p>
               <label class="field"><span>Parallel requests</span><input type="number" name="terrain_workers" min="1" max="64" step="1"></label>
             </div>
