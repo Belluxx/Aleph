@@ -190,10 +190,8 @@ def main(argv=None):
             return 0
         args = command.parse_args(argv)
         if args.command == "dashboard":
-            from src.dashboard import serve
-
-            serve(args.root, args.port, open_browser=not args.no_browser)
-            return 0
+            print("The dashboard is not available yet.", file=sys.stderr)
+            return 1
         if args.command != "capture":
             with Progress() as progress:
                 result = query(args, progress)

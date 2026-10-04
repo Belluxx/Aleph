@@ -192,7 +192,4 @@ def _capture_command(commands):
 
 
 def _dashboard_command(commands):
-    dashboard = commands.add_parser("dashboard", help="Open the local capture dashboard")
-    dashboard.add_argument("--root", type=Path, default=Path("."), help="capture directory (default: current directory)")
-    dashboard.add_argument("--port", type=int, metavar="PORT", default=8100, help="local port (default: 8100)")
-    dashboard.add_argument("--no-browser", action="store_true", help="print the URL without opening a browser")
+    commands.add_parser("dashboard", help="Open the local capture dashboard (not available yet)")

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from src import dashboard_tiles, geo, satellite, terrain
+from src import geo, satellite, terrain
 
 
 def quiet(*args):
@@ -138,7 +138,7 @@ def int16_tile(order, x=8):
     tag(325, 4, [len(block) for block in blocks])
     cursor = len(terrain.header(tags, order))
     tag(324, 4, list(accumulate([cursor] + [len(block) for block in blocks[:-1]])))
-    return terrain.header(tags, order) + b"".join(blocks), heights
+    return terrain.header(tags, order) + b"".join(blocks)
 
 
 def decode_float_block(data, predictor):
@@ -190,7 +190,7 @@ class TerrainTests(unittest.TestCase):
         for order in ("<", ">"):
             with self.subTest(order=order), TemporaryDirectory() as directory:
                 folder = Path(directory)
-                data, heights = int16_tile(order)
+                data = int16_tile(order)
                 (folder / "8.tif").write_bytes(data)
                 terrain.validate(terrain.TIFF(BytesIO(data)), dict(x=8, y=5, zoom=4))
                 terrain.merge(folder / "terrain.tif", folder, [dict(x=8, y=5, zoom=4, filename="8.tif")],
@@ -198,5 +198,3 @@ class TerrainTests(unittest.TestCase):
                 with (folder / "terrain.tif").open("rb") as stream:
                     merged = terrain.TIFF(stream)
                     self.assertEqual((merged.value(258), merged.value(317)), (16, 2))
-                decoded = dashboard_tiles.terrain_tile(folder / "8.tif").tobytes()
-                self.assertEqual(list(struct.unpack(f"={512 * 512}f", decoded)), heights)

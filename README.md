@@ -39,20 +39,6 @@ Then test with
 alephgeo --help
 ```
 
-## Open the dashboard
-
-From the dashboard you can select an area on the map and download all the data you need.
-
-```sh
-alephgeo dashboard --root captures
-```
-
-The dashboard opens in your browser at `http://127.0.0.1:8100`. Your captures will be saved in `captures`.
-
-<p align="center">
-  <img src="resources/show_video.gif" alt="Aleph dashboard demo" width="640">
-</p>
-
 ## Use the CLI
 
 Download a Street View photo or satellite image by place name:
