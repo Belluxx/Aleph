@@ -187,8 +187,8 @@ class CachedClient(Client):
         return result
 
 
-def fetch(client, addresses, *, missing_ok=False):
-    """Yield responses in order with a few requests in flight; with missing_ok, None marks missing data."""
+def fetch(client, addresses, workers, *, missing_ok=False):
+    """Yield responses in order with up to workers requests in flight; with missing_ok, None marks missing data."""
     def get(address):
         try:
             return client.get(address, missing_ok=missing_ok)
@@ -196,15 +196,15 @@ def fetch(client, addresses, *, missing_ok=False):
             return None
 
     # Keep requests sequential when the user asks for pauses between them.
-    if client.delay:
+    if client.delay or workers == 1:
         yield from map(get, addresses)
         return
     pending = deque()
-    with ThreadPoolExecutor(WORKERS) as pool:
+    with ThreadPoolExecutor(workers) as pool:
         try:
             for address in addresses:
                 pending.append(pool.submit(get, address))
-                if len(pending) > 2 * WORKERS:
+                if len(pending) > 2 * workers:
                     yield pending.popleft().result()
             while pending:
                 yield pending.popleft().result()

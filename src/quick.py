@@ -4,12 +4,12 @@ import tempfile
 from pathlib import Path
 
 from . import capture, places, routes, streetview
-from .common import MissingImagery, RequestError, now, number, positive, write_json
+from .common import WORKERS, MissingImagery, RequestError, now, number, positive, write_json
 from .geo import around, bearing, bounds, coordinate, distance, extent, point
 
-def coverage(client, area, progress):
+def coverage(client, area, progress, workers):
     try:
-        return streetview.coverage(client, area, progress)
+        return streetview.coverage(client, area, progress, workers)
     except (OSError, ValueError) as error:
         raise RequestError("provider_unavailable", f"Street View coverage request failed: {error}") from error
 
@@ -21,12 +21,12 @@ def location(client, *, at=None, place=None, match=None, best_match=False, endpo
     return (selected["lat"], selected["lon"]), selected
 
 
-def street_samples(client, sections, stops, step, progress):
+def street_samples(client, sections, stops, step, progress, workers):
     """Match panoramas to target positions along every selected street section."""
     south, west, north, east = extent([p for section in sections for p in section["points"]])
     lower, upper = around((south, west), 80), around((north, east), 80)
     area = bounds((lower[0], lower[1], upper[2], upper[3]))
-    views = coverage(client, area, progress)
+    views = coverage(client, area, progress, workers)
     ways, _ = client.maps.data(area, progress=progress)
     context = streetview.roads(ways, area, "all")
     samples, gaps, requested = [], [], 0
@@ -47,8 +47,9 @@ def street_samples(client, sections, stops, step, progress):
 def street_photos(client, output, progress, *, at=None, place=None, pano_id=None, street=None, match=None,
                   best_match=False, endpoint=places.GEOCODER, route=None, reverse=False, stops=None, step=None,
                   view="forward", heading=0, look_at=None, pitch=0, fov=75, radius=50, streetview_format="jpg",
-                  full_sphere=False, sphere_zoom=3):
+                  full_sphere=False, sphere_zoom=3, workers=WORKERS):
     number(sphere_zoom, "sphere_zoom", 0, 5, whole=True)
+    number(workers, "workers", 1, 64, whole=True)
     streetview.angle(heading, "heading")
     streetview.angle(pitch, "pitch")
     fov = number(fov, "fov", 5, 175, whole=True)
@@ -64,7 +65,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     if street is not None:
         selected_place = places.choose(client, street, match=match, best_match=best_match, street=True, endpoint=endpoint)
         sections = routes.resolve(client, selected_place, route=route, reverse=reverse, progress=progress)
-        samples, gaps, requested_stops = street_samples(client, sections, stops, step, progress)
+        samples, gaps, requested_stops = street_samples(client, sections, stops, step, progress, workers)
     elif pano_id:
         if not streetview.PANO_ID.fullmatch(pano_id):
             raise ValueError("Invalid panorama ID.")
@@ -72,7 +73,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
     else:
         requested, selected_place = location(client, at=at, place=place, match=match,
                                              best_match=best_match, endpoint=endpoint)
-        views = coverage(client, around(requested, radius * 2), progress)
+        views = coverage(client, around(requested, radius * 2), progress, workers)
         nearest = min(views, key=lambda v: (distance(requested, (v["lat"], v["lon"])), v["pano_id"]), default=None)
         samples = []
         if nearest and distance(requested, (nearest["lat"], nearest["lon"])) <= radius:
@@ -102,7 +103,7 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
                     photo = {**sample, **metadata}
                     if "heading" in photo:
                         photo["road_heading"] = photo.pop("heading")
-                    photo.update(streetview.save_sphere(client, metadata, sphere_zoom, path), path=str(path))
+                    photo.update(streetview.save_sphere(client, metadata, sphere_zoom, path, workers), path=str(path))
                     result["photos"].append(photo)
                 else:
                     for direction in directions if street else (None,):
@@ -140,7 +141,8 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
 
 
 def satellite(client, output, progress, *, at=None, place=None, match=None, best_match=False,
-              endpoint=places.GEOCODER, bbox=None, tile=None, size=200, zoom=19, satellite_format="jpg"):
+              endpoint=places.GEOCODER, bbox=None, tile=None, size=200, zoom=19, satellite_format="jpg",
+              workers=WORKERS):
     if tile is not None:
         zoom, x, y = tile
     number(zoom, "zoom", 1, 21, whole=True)
@@ -158,7 +160,7 @@ def satellite(client, output, progress, *, at=None, place=None, match=None, best
                                           best_match=best_match, endpoint=endpoint)
         area = around(center, size)
     run = capture.plan(client, area, dict(include=["satellite"], satellite_zoom=zoom,
-                                        satellite_format=satellite_format), progress)
+                                        satellite_format=satellite_format, satellite_workers=workers), progress)
     folder = capture.create_folder(run, output)
     try:
         capture.download(run, folder, client, progress)

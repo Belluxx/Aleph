@@ -136,6 +136,7 @@
               <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg>Satellite</h3>
               <div class="settings-grid">
                 <label>Tile format<select name="satellite_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
+                <label>Parallel requests<input name="satellite_workers" type="number" min="1" max="64" step="1" required></label>
               </div>
             </div>
             <div class="settings-group" data-source="streetview">
@@ -143,11 +144,19 @@
               <div class="settings-grid">
                 <label>Road coverage<select name="depth"><option value="main">Main roads</option><option value="roads">All roads</option><option value="all">Roads + paths</option></select></label>
                 <label>Photo format<select name="streetview_format"><option value="jpg">JPEG</option><option value="png">PNG</option></select></label>
+                <label>Parallel requests<input name="streetview_workers" type="number" min="1" max="64" step="1" required></label>
               </div>
             </div>
             <div class="settings-group" data-source="osm">
               <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m2 20 7-14 4 7 3-5 6 12H2Zm4-8 3 2 3-3M13 13l3 3 3-2"/></svg>Map & terrain</h3>
-              <div class="settings-grid"><label>Terrain zoom<input name="terrain_zoom" type="number" min="1" max="14" required></label></div>
+              <div class="settings-grid">
+                <label>Terrain zoom<input name="terrain_zoom" type="number" min="1" max="14" required></label>
+                <label>Parallel requests<input name="terrain_workers" type="number" min="1" max="64" step="1" required></label>
+              </div>
+            </div>
+            <div class="settings-group" data-source="mesh">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/></svg>3D mesh</h3>
+              <div class="settings-grid"><label>Parallel requests<input name="mesh_workers" type="number" min="1" max="64" step="1" required></label></div>
             </div>
             <div class="settings-group">
               <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 4v16M12 4v16M20 4v16M1 8h6m2 8h6m2-6h6"/></svg>General</h3>

@@ -120,7 +120,7 @@ def bulk(data, head, epoch):
         yield path, packed, node.get(2, epoch), node.get(5, epoch), node.get(7, imagery), box
 
 
-def plan(client, area, level, progress, *, allow_empty=False):
+def plan(client, area, level, workers, progress, *, allow_empty=False):
     """Nodes with data meeting the rectangle down to level, and the octants their children refine."""
     planet = dict(fields(client.get(BASE + "PlanetoidMetadata")))
     root = dict(fields(planet[1]))
@@ -132,7 +132,7 @@ def plan(client, area, level, progress, *, allow_empty=False):
     while pending:
         batch, pending = pending, []
         addresses = [f"{BASE}BulkMetadata/pb=!1m2!1s{path}!2u{epoch}" for path, epoch in batch]
-        for (head, epoch), data in zip(batch, fetch(client, addresses, missing_ok=True)):
+        for (head, epoch), data in zip(batch, fetch(client, addresses, workers, missing_ok=True)):
             done += 1
             progress("Finding 3D mesh nodes", done)
             if data is None:

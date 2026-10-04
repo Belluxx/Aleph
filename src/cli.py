@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from . import capture, places
-from .common import DEFAULT_CACHE, RequestError
+from .common import DEFAULT_CACHE, WORKERS, RequestError
 
 
 class Parser(argparse.ArgumentParser):
@@ -52,6 +52,10 @@ def _network_options(command):
     command.add_argument("--geocoder", default=os.environ.get("ALEPH_GEOCODER_URL", places.GEOCODER), metavar="URL", help="Photon server URL (or ALEPH_GEOCODER_URL)")
     command.add_argument("--delay", type=float, default=0, help="pause between requests in seconds (default: 0)")
     _cache_options(command)
+
+
+def _workers_option(command, flag, requests):
+    command.add_argument(flag, type=int, metavar="N", help=f"{requests}, 1–64 (default: {WORKERS}); --delay makes them sequential")
 
 
 def _sphere_options(command):
@@ -113,6 +117,7 @@ def _streetview_command(commands):
     _sphere_options(street)
 
     _network_options(street)
+    _workers_option(street, "--workers", "parallel coverage and sphere tile requests")
     street.add_argument("--streetview-format", choices=("jpg", "png"), default="jpg")
     _output_options(street)
 
@@ -128,6 +133,7 @@ def _satellite_command(commands):
     satellite.add_argument("--zoom", type=int, help="satellite zoom, 1–21 (default: 19)")
 
     _network_options(satellite)
+    _workers_option(satellite, "--workers", "parallel tile requests")
     satellite.add_argument("--tile-format", dest="satellite_format", choices=("jpg", "png"), default="jpg", help="saved tile format; merged PNG and COG are always produced (default: jpg)")
     _output_options(satellite)
 
@@ -164,6 +170,10 @@ def _capture_command(commands):
 
     # Requests, cache, and output shared by all capture sources.
     area.add_argument("--delay", type=float, help="pause between requests in seconds (default: 0)")
+    _workers_option(area, "--streetview-workers", "parallel Street View coverage and sphere tile requests")
+    _workers_option(area, "--satellite-workers", "parallel satellite tile requests")
+    _workers_option(area, "--terrain-workers", "parallel terrain tile requests")
+    _workers_option(area, "--mesh-workers", "parallel 3D mesh requests")
     _cache_options(area)
     _output_options(area)
     area.set_defaults(**capture.DEFAULT_OPTIONS)

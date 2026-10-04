@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 from . import mesh, satellite, streetview, terrain
-from .common import MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
+from .common import WORKERS, MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
 from .geo import bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm", "mesh")
@@ -20,11 +20,15 @@ DEFAULT_OPTIONS = dict(
     include=["streetview", "satellite", "osm"], step=30, fov=75, depth="roads", streetview_format="jpg",
     full_sphere=False, sphere_zoom=3,
     delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14, mesh_level=21,
+    streetview_workers=WORKERS, satellite_workers=WORKERS, terrain_workers=WORKERS, mesh_workers=WORKERS,
 )
 
-# Average connection speed / hardware timings, just to give an idea to the user, not precise
-REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.02, satellite_tile=0.02, terrain_tile=0.13,
-                       mesh_node=0.021)
+# Average sequential request timings, just to give an idea to the user, not precise
+REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.27, satellite_tile=0.25, terrain_tile=1.39,
+                       mesh_node=0.34)
+# Options choosing how many requests of each kind run in parallel.
+REQUEST_WORKERS = dict(sphere_tile="streetview_workers", satellite_tile="satellite_workers",
+                       terrain_tile="terrain_workers", mesh_node="mesh_workers")
 SPHERE_TILES = (1, 2, 8, 32, 128, 512)
 OSM_EXPORT_SECONDS = 10
 
@@ -77,7 +81,8 @@ def settings(values=None):
     positive(options["step"], "step")
     number(options["delay"], "delay", 0)
     for key, low, high in (("fov", 5, 175), ("sphere_zoom", 0, 5), ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14),
-                           ("mesh_level", 1, 22)):
+                           ("mesh_level", 1, 22), ("streetview_workers", 1, 64), ("satellite_workers", 1, 64),
+                           ("terrain_workers", 1, 64), ("mesh_workers", 1, 64)):
         options[key] = number(options[key], key, low, high, whole=True)
     if type(options["full_sphere"]) is not bool:
         raise ValueError("full_sphere must be true or false.")
@@ -115,7 +120,8 @@ def plan(client, area, options, progress):
         stages.append(dict(mode="osm", results=[], notes=OSM_NOTES))
         stages.append(dict(mode="terrain", grid=grid(area, options["terrain_zoom"]), results=[], notes=TERRAIN_NOTES))
     if "mesh" in options["include"]:
-        stage = mesh.plan(client, area, options["mesh_level"], progress, allow_empty=len(options["include"]) > 1)
+        stage = mesh.plan(client, area, options["mesh_level"], options["mesh_workers"], progress,
+                          allow_empty=len(options["include"]) > 1)
         stages.append(dict(stage, notes=MESH_NOTES))
     return dict(format="aleph-python", version=FORMAT_VERSION, bounds=area, options=options,
                 started_at=now(), state="planned", stages=stages)
@@ -158,9 +164,15 @@ def estimate(run):
             counts["mesh_nodes"] = requests["mesh_node"] = remaining
         else:
             counts["terrain_tiles"] = requests["terrain_tile"] = remaining
-    seconds = sum(count * REQUEST_SECONDS[kind] for kind, count in requests.items())
+    options = run["options"]
+
+    def workers(kind):
+        # Requests run one at a time when the user asks for pauses between them.
+        return 1 if options["delay"] or kind not in REQUEST_WORKERS else options[REQUEST_WORKERS[kind]]
+
+    seconds = sum(count * REQUEST_SECONDS[kind] / workers(kind) for kind, count in requests.items())
     seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
-    seconds += max(0, sum(requests.values()) - 1) * run["options"]["delay"]
+    seconds += max(0, sum(requests.values()) - 1) * options["delay"]
     return dict(counts, seconds=math.ceil(seconds))
 
 
@@ -191,7 +203,8 @@ def capture_streetview(stage, run, folder, client, progress):
             if sphere:
                 del photo["heading"]  # A sphere has no single perspective camera heading.
                 photo["filename"] = f"streetview/photos/{index + 1:06d}_sphere.{options['streetview_format']}"
-                photo.update(streetview.save_sphere(client, metadata, options["sphere_zoom"], folder / photo["filename"]))
+                photo.update(streetview.save_sphere(client, metadata, options["sphere_zoom"], folder / photo["filename"],
+                                                    options["streetview_workers"]))
             else:
                 side = "left" if index % 2 == 0 else "right"
                 photo.update(side=side, heading=(sample["heading"] + streetview.VIEW_OFFSETS[side]) % 360,
@@ -212,7 +225,8 @@ def capture_satellite(stage, run, folder, client, progress):
     progress("Satellite", done, total(stage))
     remaining = list(tiles(stage["grid"]))[done:]
     addresses = [f"https://mt1.google.com/vt/lyrs=s&x={tile['x']}&y={tile['y']}&z={tile['zoom']}" for tile in remaining]
-    for tile, address, data in zip(remaining, addresses, fetch(client, addresses, missing_ok=True)):
+    downloads = fetch(client, addresses, run["options"]["satellite_workers"], missing_ok=True)
+    for tile, address, data in zip(remaining, addresses, downloads):
         extension = run["options"]["satellite_format"]
         if data is None:
             # Persist the gap so resume and offline export keep it transparent.
@@ -248,7 +262,7 @@ def capture_terrain(stage, run, folder, client, progress):
     remaining = list(tiles(stage["grid"]))[done:]
     addresses = [f"https://elevation-tiles-prod.s3.amazonaws.com/geotiff/{tile['zoom']}/{tile['x']}/{tile['y']}.tif"
                  for tile in remaining]
-    for tile, address, data in zip(remaining, addresses, fetch(client, addresses)):
+    for tile, address, data in zip(remaining, addresses, fetch(client, addresses, run["options"]["terrain_workers"])):
         terrain.validate(terrain.TIFF(BytesIO(data)), tile)
         name = f"terrain/tiles/terrain_z{tile['zoom']}_x{tile['x']}_y{tile['y']}.tif"
         write_bytes(folder / name, data)
@@ -262,7 +276,7 @@ def capture_mesh(stage, run, folder, client, progress):
     done = len(stage["results"])
     progress("3D mesh", done, total(stage))
     nodes = stage["nodes"][done:]
-    for node, data in zip(nodes, fetch(client, map(mesh.address, nodes), missing_ok=True)):
+    for node, data in zip(nodes, fetch(client, map(mesh.address, nodes), run["options"]["mesh_workers"], missing_ok=True)):
         if data is None:
             stage["results"].append(dict(status="skipped", reason="The 3D mesh node is not available."))
         else:

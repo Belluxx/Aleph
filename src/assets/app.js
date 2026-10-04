@@ -948,7 +948,8 @@ async function planCapture(event) {
   const options = {include: data.getAll("include"), depth: data.get("depth"),
     full_sphere: data.get("full_sphere") === "true",
     streetview_format: data.get("streetview_format"), satellite_format: data.get("satellite_format")};
-  for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom", "sphere_zoom", "mesh_level"]) options[key] = Number(data.get(key));
+  for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom", "sphere_zoom", "mesh_level",
+    "streetview_workers", "satellite_workers", "terrain_workers", "mesh_workers"]) options[key] = Number(data.get(key));
   const bounds = [...state.draftBounds];
   state.submitting = true;
   setDrawMode(false);

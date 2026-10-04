@@ -102,14 +102,14 @@ def query(args, progress):
             if args.pano_id and args.radius is not None:
                 raise ValueError("--radius applies to coordinates or a place name.")
             keys += ("pano_id", "street", "route", "reverse", "stops", "step", "view", "heading",
-                     "look_at", "pitch", "fov", "radius", "streetview_format", "full_sphere", "sphere_zoom")
+                     "look_at", "pitch", "fov", "radius", "streetview_format", "full_sphere", "sphere_zoom", "workers")
             operation = quick.street_photos
         else:
             if args.size is not None and (args.bbox is not None or args.tile is not None):
                 raise ValueError("--size applies to coordinates or a place name.")
             if args.tile is not None and args.zoom is not None:
                 raise ValueError("--tile already includes its zoom; omit --zoom.")
-            keys += ("bbox", "tile", "size", "zoom", "satellite_format")
+            keys += ("bbox", "tile", "size", "zoom", "satellite_format", "workers")
             operation = quick.satellite
         values = {key: getattr(args, key) for key in keys if getattr(args, key) is not None}
         result = operation(client, args.output, progress, endpoint=args.geocoder, **values)

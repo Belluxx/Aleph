@@ -61,7 +61,7 @@ def parse_coverage(data):
         raise ValueError("Unreadable Google panorama coverage; the endpoint may have changed.") from error
 
 
-def coverage(client, area, progress):
+def coverage(client, area, progress, workers):
     """Every Google panorama listed in the zoom-17 tiles that cover the area."""
     coverage_grid = grid(area, 17)
     count = coverage_grid["rows"] * coverage_grid["columns"]
@@ -70,7 +70,7 @@ def coverage(client, area, progress):
     addresses = (url("https://www.google.com/maps/photometa/ac/v1",
                      pb=f"!1m1!1smaps_sv.tactile!6m3!1i{tile['x']}!2i{tile['y']}!3i17!8b1")
                  for tile in tiles(coverage_grid))
-    for i, data in enumerate(fetch(client, addresses), 1):
+    for i, data in enumerate(fetch(client, addresses, workers), 1):
         for view in parse_coverage(data):
             found[view["pano_id"]] = view
         progress("Finding panoramas", i, count)
@@ -146,7 +146,7 @@ def save_photo(client, pano_id, heading, fov, pitch, path):
     return dict(width=PHOTO_SIZE[0], height=PHOTO_SIZE[1], source_url=address)
 
 
-def save_sphere(client, metadata, zoom, target):
+def save_sphere(client, metadata, zoom, target, workers):
     """Assemble native panorama tiles; retain partial tiles for retry/resume."""
     zoom = min(zoom, len(metadata["image_sizes"]) - 1)
     width, height = metadata["image_sizes"][zoom]
@@ -159,7 +159,7 @@ def save_sphere(client, metadata, zoom, target):
     addresses = (url("https://streetviewpixels-pa.googleapis.com/v1/tile", cb_client="maps_sv.tactile",
                      panoid=metadata["pano_id"], zoom=zoom, x=x, y=y) for x, y in missing)
     with Image.new("RGB", (width, height)) as sphere:
-        for (x, y), data in zip(missing, fetch(client, addresses, missing_ok=True)):
+        for (x, y), data in zip(missing, fetch(client, addresses, workers, missing_ok=True)):
             if data is None:
                 raise MissingImagery("The requested image is not available.")
             with open_image(data, (tw, th)) as tile:
@@ -284,7 +284,8 @@ def plan(client, area, options, progress, *, allow_empty=False):
     parts = roads(ways, area, options["depth"])
     if not parts and not allow_empty:
         raise ValueError("No mapped roads at this path depth. Choose another area or depth.")
-    found = [view for view in coverage(client, area, progress) if inside((view["lat"], view["lon"]), area)]
+    found = [view for view in coverage(client, area, progress, options["streetview_workers"])
+             if inside((view["lat"], view["lon"]), area)]
     progress("Indexing roads")
     lines = [Line(part["points"]) for part in parts]
     index = RoadIndex(lines)
