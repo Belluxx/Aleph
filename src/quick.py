@@ -7,9 +7,6 @@ from . import capture, places, routes, streetview
 from .common import MissingImagery, RequestError, now, number, positive, write_json
 from .geo import around, bearing, bounds, coordinate, distance, extent, point
 
-VIEW_OFFSETS = {"forward": 0, "backward": 180, "left": -90, "right": 90}
-
-
 def coverage(client, area, progress):
     try:
         return streetview.coverage(client, area, progress)
@@ -98,30 +95,24 @@ def street_photos(client, output, progress, *, at=None, place=None, pano_id=None
         progress("Street View", 0, len(samples))
         for index, sample in enumerate(samples, 1):
             try:
-                metadata = streetview.fetch_metadata(client, sample["pano_id"], full_sphere=full_sphere)
-                if metadata["pano_id"] != sample["pano_id"]:
-                    raise ValueError("The provider returned a different panorama.")
+                metadata = streetview.fetch_metadata(client, sample, full_sphere=full_sphere)
                 actual = (metadata["lat"], metadata["lon"])
-                if "lat" in sample and distance(actual, (sample["lat"], sample["lon"])) > 1:
-                    raise MissingImagery("Panorama position changed; retry with --refresh.")
                 if full_sphere:
                     path = folder / f"{len(result['photos']) + 1:03d}_sphere.{streetview_format}"
                     photo = {**sample, **metadata}
                     if "heading" in photo:
                         photo["road_heading"] = photo.pop("heading")
-                    photo.update(streetview.save_sphere(client, metadata, sphere_zoom, path), path=str(path),
-                                 source_url=streetview.metadata_url(sample["pano_id"]))
+                    photo.update(streetview.save_sphere(client, metadata, sphere_zoom, path), path=str(path))
                     result["photos"].append(photo)
                 else:
                     for direction in directions if street else (None,):
-                        angle = (sample["heading"] + VIEW_OFFSETS[direction]) % 360 if street else heading
+                        angle = (sample["heading"] + streetview.VIEW_OFFSETS[direction]) % 360 if street else heading
                         if look_at is not None:
                             angle = bearing(actual, look_at)
-                        address = streetview.image_url(sample["pano_id"], angle, fov, pitch)
-                        data = client.get(address, missing_ok=True)
                         path = folder / f"{len(result['photos']) + 1:03d}.{streetview_format}"
-                        photo = {**sample, **metadata, **streetview.save_photo(data, path)}
-                        photo.update(heading=angle, pitch=pitch, fov=fov, path=str(path), source_url=address)
+                        photo = {**sample, **metadata,
+                                 **streetview.save_photo(client, sample["pano_id"], angle, fov, pitch, path)}
+                        photo.update(heading=angle, pitch=pitch, fov=fov, path=str(path))
                         if street:
                             photo["view"] = direction
                         if "requested_location" in sample:

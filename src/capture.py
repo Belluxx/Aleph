@@ -12,7 +12,7 @@ from PIL import Image
 
 from . import satellite, streetview, terrain
 from .common import MissingImagery, contained, now, number, open_image, positive, write_bytes, write_json
-from .geo import bounds, collection, coordinate, distance, feature, grid, pixel, tile_ring, tiles
+from .geo import bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm")
 FORMAT_VERSION = 4
@@ -171,25 +171,19 @@ def capture_streetview(stage, run, folder, client, progress):
         try:
             # Both sides of a stop share one panorama.
             if metadata is None or metadata["pano_id"] != sample["pano_id"]:
-                fetched = streetview.fetch_metadata(client, sample["pano_id"], full_sphere=sphere)
-                if (fetched["pano_id"] != sample["pano_id"]
-                        or distance((sample["lat"], sample["lon"]), (fetched["lat"], fetched["lon"])) > 0.1):
-                    raise ValueError("The planned panorama identity or position changed. Plan a new run.")
-                metadata = fetched
+                metadata = streetview.fetch_metadata(client, sample, full_sphere=sphere)
             photo.update(metadata)
             if sphere:
                 del photo["heading"]  # A sphere has no single perspective camera heading.
                 photo["filename"] = f"streetview/photos/{index + 1:06d}_sphere.{options['streetview_format']}"
-                photo.update(streetview.save_sphere(client, metadata, options["sphere_zoom"], folder / photo["filename"]),
-                             source_url=streetview.metadata_url(sample["pano_id"]))
+                photo.update(streetview.save_sphere(client, metadata, options["sphere_zoom"], folder / photo["filename"]))
             else:
                 side = "left" if index % 2 == 0 else "right"
-                photo.update(side=side, heading=(sample["heading"] + (-90 if side == "left" else 90)) % 360,
+                photo.update(side=side, heading=(sample["heading"] + streetview.VIEW_OFFSETS[side]) % 360,
                              pitch=0, fov=options["fov"])
-                photo["source_url"] = streetview.image_url(photo["pano_id"], photo["heading"], photo["fov"])
-                data = client.get(photo["source_url"], missing_ok=True)
                 photo["filename"] = "streetview/photos/" + streetview.photo_name(photo, options["streetview_format"])
-                photo.update(streetview.save_photo(data, folder / photo["filename"]))
+                photo.update(streetview.save_photo(client, photo["pano_id"], photo["heading"], photo["fov"], 0,
+                                                   folder / photo["filename"]))
             photo.update(captured_at=now(), status="saved", streetview_url=streetview.maps_url(photo))
         except MissingImagery as error:
             photo.update(status="skipped", reason=str(error))

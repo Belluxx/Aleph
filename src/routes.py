@@ -124,20 +124,16 @@ def match_views(views, route, context, step, targets):
             continue
         meters, separation = line.project(location)
         if separation <= 30:
-            candidates.append(dict(view, path_meters=meters, road_distance_m=separation,
+            candidates.append(dict(view, path_meters=meters, road_distance=separation,
                                    heading=line.heading(meters, step)))
-    # Coverage can include different panorama IDs at the same physical position.
-    unique = []
-    for candidate in sorted(candidates, key=lambda item: (item["path_meters"], item["road_distance_m"], item["pano_id"])):
-        if not unique or candidate["path_meters"] - unique[-1]["path_meters"] >= 0.1:
-            unique.append(candidate)
+    unique = streetview.distinct(candidates)
     selected, gaps, used = [], [], set()
     for stop, target in enumerate(targets, 1):
         eligible = [view for view in unique if view["pano_id"] not in used
                     and abs(view["path_meters"] - target) <= step / 2 + 0.01]
         if eligible:
             chosen = min(eligible, key=lambda view: (abs(view["path_meters"] - target),
-                                                    view["road_distance_m"], view["pano_id"]))
+                                                    view["road_distance"], view["pano_id"]))
             used.add(chosen["pano_id"])
             selected.append(dict(chosen, stop=stop, target_meters=target,
                                  requested_location=list(line.at(target))))

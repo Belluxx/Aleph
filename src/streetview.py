@@ -22,6 +22,7 @@ DEPTHS = {
 }
 PANO_ID = re.compile(r"[\w-]{10,200}", re.ASCII)
 PHOTO_SIZE = (1024, 576)
+VIEW_OFFSETS = {"forward": 0, "backward": 180, "left": -90, "right": 90}
 FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
 
 
@@ -113,8 +114,13 @@ def metadata_url(pano_id):
                pb=f"!1m1!1smaps_sv.tactile!2m2!1sen!2sUS!3m3!1m2!1e2!2s{pano_id}!4m6!1e1!1e2!1e3!1e4!2m1!1e1")
 
 
-def fetch_metadata(client, pano_id, *, full_sphere=False):
-    return parse_metadata(client.get(metadata_url(pano_id)), full_sphere=full_sphere)
+def fetch_metadata(client, sample, *, full_sphere=False):
+    """Refuse a panorama whose identity or position changed since it was found."""
+    metadata = parse_metadata(client.get(metadata_url(sample["pano_id"])), full_sphere=full_sphere)
+    if metadata["pano_id"] != sample["pano_id"] or (
+            "lat" in sample and distance((sample["lat"], sample["lon"]), (metadata["lat"], metadata["lon"])) > 1):
+        raise ValueError("The panorama identity or position changed. Plan again or rerun with --refresh.")
+    return metadata
 
 
 def image_url(pano_id, heading, fov, pitch=0):
@@ -132,10 +138,11 @@ def maps_url(photo):
     return url("https://www.google.com/maps/@", **params)
 
 
-def save_photo(data, path):
-    with open_image(data, PHOTO_SIZE) as image, image.convert("RGB") as rgb:
+def save_photo(client, pano_id, heading, fov, pitch, path):
+    address = image_url(pano_id, heading, fov, pitch)
+    with open_image(client.get(address, missing_ok=True), PHOTO_SIZE) as image, image.convert("RGB") as rgb:
         save_image(rgb, path, quality=80)
-    return dict(width=PHOTO_SIZE[0], height=PHOTO_SIZE[1])
+    return dict(width=PHOTO_SIZE[0], height=PHOTO_SIZE[1], source_url=address)
 
 
 def save_sphere(client, metadata, zoom, target):
@@ -163,7 +170,7 @@ def save_sphere(client, metadata, zoom, target):
         save_image(sphere, target, quality=90)
     shutil.rmtree(cache)
     return dict(projection="equirectangular", width=width, height=height, sphere_zoom=zoom,
-                tile_count=columns * rows)
+                tile_count=columns * rows, source_url=metadata_url(metadata["pano_id"]))
 
 
 def roads(ways, area, depth):
@@ -247,11 +254,17 @@ def match_road(parts, lines, index, point, spacing):
     return dict(nearest, match_method=method)
 
 
+def distinct(candidates):
+    """Coverage can include different panorama IDs at the same physical position."""
+    unique = []
+    for candidate in sorted(candidates, key=lambda c: (c["path_meters"], c["road_distance"], c["pano_id"])):
+        if not unique or candidate["path_meters"] - unique[-1]["path_meters"] >= 0.1:
+            unique.append(candidate)
+    return unique
+
+
 def select_stops(candidates, spacing):
-    positions = []
-    for candidate in sorted(candidates, key=lambda c: (c["path_meters"], c["pano_id"])):
-        if not positions or candidate["path_meters"] - positions[-1]["path_meters"] >= 0.1:
-            positions.append(candidate)
+    positions = distinct(candidates)
     index = 0
     while index < len(positions):
         yield positions[index]
