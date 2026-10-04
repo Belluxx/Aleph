@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from src import geo, satellite, terrain
+from src import dashboard_tiles, geo, satellite, terrain
 
 
 def quiet(*args):
@@ -110,6 +110,37 @@ def float_tile(order, predictor, x=8):
     return terrain.header(tags, order) + data, raw
 
 
+def int16_tile(order, x=8):
+    """Synthetic 512px Int16 source as used up to zoom 12: four 256px blocks, predictor 2."""
+    heights = [(i * 37 + x * 11) % 9000 - 500 for i in range(512 * 512)]
+    blocks = []
+    for by, bx in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        encoded = b""
+        for y in range(by * 256, by * 256 + 256):
+            row = heights[y * 512 + bx * 256:y * 512 + bx * 256 + 256]
+            encoded += struct.pack(f"{order}256H", *((b - a) & 0xFFFF for a, b in zip([0] + row, row)))
+        blocks.append(zlib.compress(encoded))
+    scale = 2 * math.pi * 6_378_137 / 16 / 512
+    tags = {}
+
+    def tag(code, kind, values):
+        tags[code] = kind, len(values), struct.pack(order + terrain.TYPES[kind] * len(values), *values)
+
+    for code, value in {256: 512, 257: 512, 258: 16, 259: 8, 262: 1, 277: 1,
+                        317: 2, 322: 256, 323: 256, 339: 2}.items():
+        tag(code, 3, [value])
+    tag(33550, 12, [scale, scale, 0])
+    tag(33922, 12, [0, 0, 0, -math.pi * 6_378_137 + x * 512 * scale,
+                    math.pi * 6_378_137 - 5 * 512 * scale, 0])
+    tag(34735, 3, [1, 1, 0, 2, 1025, 0, 1, 1, 3072, 0, 1, 3857])
+    tag(42113, 2, [bytes([v]) for v in b"-32768\0"])
+    tag(324, 4, [0] * 4)
+    tag(325, 4, [len(block) for block in blocks])
+    cursor = len(terrain.header(tags, order))
+    tag(324, 4, list(accumulate([cursor] + [len(block) for block in blocks[:-1]])))
+    return terrain.header(tags, order) + b"".join(blocks), heights
+
+
 def decode_float_block(data, predictor):
     raw = zlib.decompress(data)
     if predictor != 3:
@@ -153,3 +184,19 @@ class TerrainTests(unittest.TestCase):
         for payload, x in ((data[:-1], 8), (data, 9)):
             with self.subTest(truncated=len(payload) < len(data), x=x), self.assertRaises(ValueError):
                 terrain.validate(terrain.TIFF(BytesIO(payload)), dict(x=x, y=5, zoom=4))
+
+    def test_int16_terrain_merges_and_decodes(self):
+        # Sources up to zoom 12 are Int16 with horizontal differencing, not Float32.
+        for order in ("<", ">"):
+            with self.subTest(order=order), TemporaryDirectory() as directory:
+                folder = Path(directory)
+                data, heights = int16_tile(order)
+                (folder / "8.tif").write_bytes(data)
+                terrain.validate(terrain.TIFF(BytesIO(data)), dict(x=8, y=5, zoom=4))
+                terrain.merge(folder / "terrain.tif", folder, [dict(x=8, y=5, zoom=4, filename="8.tif")],
+                              dict(columns=1, rows=1, x0=8, y0=5, zoom=4), quiet)
+                with (folder / "terrain.tif").open("rb") as stream:
+                    merged = terrain.TIFF(stream)
+                    self.assertEqual((merged.value(258), merged.value(317)), (16, 2))
+                decoded = dashboard_tiles.terrain_tile(folder / "8.tif").tobytes()
+                self.assertEqual(list(struct.unpack(f"={512 * 512}f", decoded)), heights)

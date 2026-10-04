@@ -32,7 +32,7 @@ OSM_NOTES = {
     "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
 }
 TERRAIN_NOTES = {
-    "terrain": "Float32 heights in meters, EPSG:3857, without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
+    "terrain": "Heights in meters (Int16 up to zoom 12, Float32 from zoom 13), EPSG:3857, without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
 
@@ -47,7 +47,7 @@ satellite.tif is a lossless RGBA Cloud Optimized GeoTIFF in EPSG:3857.
 It is north-up, cropped to enclosing pixels, with internal overviews.
 satellite.png contains the same full-resolution pixels for easy viewing.
 Transparent pixels mark missing imagery or unfinished downloads.
-terrain.tif is Float32 meters in EPSG:3857, without resampling.
+terrain.tif holds meters in EPSG:3857 (Int16 up to zoom 12, else Float32).
 Keep terrain/tiles/ for resume and offline export.
 Filenames in the manifest and GeoJSON are relative to this run folder.
 See manifest.json for settings, sources, imagery dates, and coverage notes.

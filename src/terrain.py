@@ -1,4 +1,7 @@
-"""Join Float32 GeoTIFFs, copying 256-pixel blocks and splitting larger ones."""
+"""Join terrain GeoTIFFs, copying 256-pixel blocks and splitting larger ones.
+
+Sources use Int16 heights up to zoom 12 and Float32 from zoom 13.
+"""
 
 import math
 import struct
@@ -34,12 +37,14 @@ class TIFF:
             size = struct.calcsize(self.order + TYPES[kind]) * length
             raw = entry[8 : 8 + size] if size <= 4 else self.read(location, size)
             self.tags[code] = kind, length, raw
-        required = {258: 32, 339: 3, 277: 1, 262: 1}
-        if any(self.value(key) != value for key, value in required.items()) or self.value(259) not in (1, 8, 32946):
-            raise ValueError("Expected tiled Float32 terrain.")
-        if (self.value(322), self.value(323)) not in ((256, 256), (512, 512)):
-            raise ValueError("Expected 256- or 512-pixel terrain blocks.")
-        if self.value(274, 1) != 1 or self.value(284, 1) != 1 or self.value(317, 1) not in (1, 3):
+        self.float = (self.value(258), self.value(339)) == (32, 3)
+        if ((not self.float and (self.value(258), self.value(339)) != (16, 2))
+                or self.value(277) != 1 or self.value(262) != 1 or self.value(259) not in (1, 8, 32946)):
+            raise ValueError("Expected tiled Float32 or Int16 terrain.")
+        # Only Float32 sources use 512-pixel blocks, which blocks() splits.
+        if (self.value(322), self.value(323)) not in ((256, 256), (512, 512) if self.float else (256, 256)):
+            raise ValueError("Unexpected terrain block size.")
+        if self.value(274, 1) != 1 or self.value(284, 1) != 1 or self.value(317, 1) not in ((1, 3) if self.float else (1, 2)):
             raise ValueError("Unsupported terrain layout.")
         if any(key not in self.tags for key in (33550, 33922, 34735, 42113, 324, 325)):
             raise ValueError("Missing terrain georeferencing or blocks.")

@@ -25,8 +25,15 @@ def unpredict(data, width):
     return bytes(rows)
 
 
+def undifference(data, width, order):
+    """Undo the TIFF horizontal predictor for 16-bit samples."""
+    fmt = f"{order}{width}H"
+    return b"".join(struct.pack(fmt, *(v & 0xFFFF for v in accumulate(struct.unpack(fmt, data[y:y + width * 2]))))
+                    for y in range(0, len(data), width * 2))
+
+
 def terrain_tile(path):
-    """Decode one saved 512-pixel terrain tile without libtiff."""
+    """Decode one saved 512-pixel Int16 or Float32 terrain tile without libtiff."""
     with path.open("rb") as stream:
         source = terrain.TIFF(stream)
         size = source.value(322)
@@ -36,12 +43,17 @@ def terrain_tile(path):
             data = source.read(offset, length)
             if source.value(259) != 1:
                 data = zlib.decompress(data)
+            big = source.order == ">"
             if source.value(317, 1) == 3:
-                data, raw_mode = unpredict(data, size), "F;32BF"
-            else:
-                raw_mode = "F;32F" if source.order == "<" else "F;32BF"
-            with Image.frombytes("F", (size, size), data, "raw", raw_mode) as block:
-                image.paste(block, (i % per_row * size, i // per_row * size))
+                data, big = unpredict(data, size), True
+            elif source.value(317, 1) == 2:
+                data = undifference(data, size, source.order)
+            mode, raw_mode = ("F", "F;32BF" if big else "F;32F") if source.float else ("I", "I;16BS" if big else "I;16S")
+            with (
+                Image.frombytes(mode, (size, size), data, "raw", raw_mode) as block,
+                block.convert("F") as heights,
+            ):
+                image.paste(heights, (i % per_row * size, i // per_row * size))
         nodata = float(b"".join(source.values(42113)).rstrip(b"\0"))
     # RGB elevation has no NoData representation. Unknown heights use sea level.
     image.putdata([v if math.isfinite(v) and v != nodata else 0
