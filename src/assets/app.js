@@ -10,7 +10,7 @@ const state = {config: null, captures: [], selected: null, map: null, ready: nul
   previousView: null, rotating: null, terrainFocus: null, refreshing: false, lastRefresh: 0, popup: null};
 const form = $("capture-form");
 const maxDrawLatitude = 85.0511287; // Remain inside Mercator bounds after rounding to seven decimals.
-const names = {streetview: "STREET VIEW", satellite: "SATELLITE", osm: "OSM + TERRAIN"};
+const names = {streetview: "STREET VIEW", satellite: "SATELLITE", osm: "OSM", terrain: "TERRAIN"};
 const resolutionNames = ["Lowest", "Very low", "Low", "Medium", "High", "Very high", "Maximum"];
 const sphereResolutionNames = ["Lowest", "Low", "Medium", "High", "Very high", "Maximum"];
 const layerGroups = {satellite: ["satellite"], buildings: ["buildings", "building-outlines"],
@@ -450,7 +450,7 @@ async function selectCapture(identity, fit = true) {
     }
     if (newTerrain) {
       const terrainSource = {type: "raster-dem", tiles: [template("terrain")], tileSize: 512,
-        encoding: "terrarium", bounds, minzoom: 0, maxzoom: run.layers.osm.zoom,
+        encoding: "terrarium", bounds, minzoom: 0, maxzoom: run.layers.terrain.zoom,
         attribution: '<a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a>'};
       map.addSource("terrain", terrainSource);
       map.addSource("terrain-hillshade", {...terrainSource});

@@ -87,8 +87,7 @@ class Tiles:
 
     def get(self, folder, run, kind, z, x, y):
         folder = folder.resolve()
-        mode = "satellite" if kind == "satellite" else "osm"
-        stage = next((stage for stage in run["stages"] if stage["mode"] == mode), None)
+        stage = next((stage for stage in run["stages"] if stage["mode"] == kind), None)
         if stage is None or z < 0 or z > stage["grid"]["zoom"] or not (0 <= x < 2**z and 0 <= y < 2**z):
             raise FileNotFoundError("Tile is outside this capture.")
         directory = self.cache / folder.name / kind

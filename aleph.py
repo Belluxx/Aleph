@@ -35,10 +35,12 @@ def describe(run):
             latitude = math.radians((run["bounds"][0] + run["bounds"][2]) / 2)
             scale = 2 * math.pi * MERCATOR_RADIUS * math.cos(latitude) / (256 * 2 ** g["zoom"])
             message = f"{estimate['satellite_tiles']:,} tiles, {g['width']:,} × {g['height']:,} px at about {scale:.2f} m/px"
+        elif mode == "osm":
+            label = "OSM map"
+            message = "1 extract" if estimate["osm_maps"] else "already saved"
         else:
-            label = "Map & terrain"
-            maps = estimate["osm_maps"]
-            message = f"{maps:,} OSM {'map' if maps == 1 else 'maps'} and {estimate['terrain_tiles']:,} terrain tiles"
+            label = "Terrain"
+            message = f"{estimate['terrain_tiles']:,} tiles"
         print(f"  {label:<15}{message}", file=sys.stderr)
     minutes, seconds = divmod(estimate["seconds"], 60)
     hours, minutes = divmod(minutes, 60)

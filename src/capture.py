@@ -15,7 +15,7 @@ from .common import MissingImagery, contained, now, number, open_image, positive
 from .geo import bounds, collection, coordinate, distance, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm")
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 DEFAULT_OPTIONS = dict(
     include=list(SOURCES), step=30, fov=75, depth="roads", streetview_format="jpg",
     full_sphere=False, sphere_zoom=3,
@@ -30,6 +30,8 @@ OSM_EXPORT_SECONDS = 10
 OSM_NOTES = {
     "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
     "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
+}
+TERRAIN_NOTES = {
     "terrain": "Float32 heights in meters, EPSG:3857, without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
@@ -79,6 +81,11 @@ def settings(values=None):
     return options
 
 
+def modes(include):
+    """Stage modes for the selected sources; osm also downloads terrain."""
+    return [mode for source in include for mode in (("osm", "terrain") if source == "osm" else (source,))]
+
+
 def create_folder(run, parent):
     """Persist an already prepared capture without repeating planning requests."""
     parent = Path(parent).expanduser().resolve()
@@ -97,7 +104,8 @@ def plan(client, area, options, progress):
     if "satellite" in options["include"]:
         stages.append(dict(mode="satellite", grid=grid(area, options["satellite_zoom"]), results=[]))
     if "osm" in options["include"]:
-        stages.append(dict(mode="osm", grid=grid(area, options["terrain_zoom"]), results=[], notes=OSM_NOTES))
+        stages.append(dict(mode="osm", results=[], notes=OSM_NOTES))
+        stages.append(dict(mode="terrain", grid=grid(area, options["terrain_zoom"]), results=[], notes=TERRAIN_NOTES))
     return dict(format="aleph-python", version=FORMAT_VERSION, bounds=area, options=options,
                 started_at=now(), state="planned", stages=stages)
 
@@ -105,7 +113,9 @@ def plan(client, area, options, progress):
 def total(stage):
     if stage["mode"] == "streetview":
         return len(stage["samples"]) * (1 if stage["full_sphere"] else 2)
-    return stage["grid"]["rows"] * stage["grid"]["columns"] + (stage["mode"] == "osm")
+    if stage["mode"] == "osm":
+        return 1
+    return stage["grid"]["rows"] * stage["grid"]["columns"]
 
 
 def estimate(run):
@@ -129,9 +139,10 @@ def estimate(run):
                 requests["photo"] = remaining
         elif stage["mode"] == "satellite":
             counts["satellite_tiles"] = requests["satellite_tile"] = remaining
+        elif stage["mode"] == "osm":
+            counts["osm_maps"] = remaining
         else:
-            counts["osm_maps"] = int(not any(item["filename"] == "map.osm" for item in stage["results"]))
-            counts["terrain_tiles"] = requests["terrain_tile"] = remaining - counts["osm_maps"]
+            counts["terrain_tiles"] = requests["terrain_tile"] = remaining
     seconds = sum(count * REQUEST_SECONDS[kind] for kind, count in requests.items())
     seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
     seconds += max(0, sum(requests.values()) - 1) * run["options"]["delay"]
@@ -218,21 +229,15 @@ def capture_satellite(stage, run, folder, client, progress):
 
 
 def capture_osm(stage, run, folder, client, progress):
-    failure = None
-    if not any(item["filename"] == "map.osm" for item in stage["results"]):
-        try:
-            metadata = client.maps.export(run["bounds"], folder / "map.osm", progress)
-            stage["results"].append(dict(filename="map.osm", captured_at=now(), **metadata))
-            yield
-        except (OSError, ValueError) as error:
-            # Keep terrain usable if the map fails; report the error after saving it.
-            failure = error
-    saved = sum("x" in item for item in stage["results"])
-    count = stage["grid"]["rows"] * stage["grid"]["columns"]
-    label = "Downloading terrain tiles" if failure is None else f"Downloading terrain tiles (map failed: {failure})"
-    progress(label, saved, count)
+    metadata = client.maps.export(run["bounds"], folder / "map.osm", progress)
+    stage["results"].append(dict(filename="map.osm", captured_at=now(), **metadata))
+    yield
+
+
+def capture_terrain(stage, run, folder, client, progress):
+    progress("Downloading terrain tiles", len(stage["results"]), total(stage))
     for i, tile in enumerate(tiles(stage["grid"])):
-        if i < saved:
+        if i < len(stage["results"]):
             continue
         address = f"https://elevation-tiles-prod.s3.amazonaws.com/geotiff/{tile['zoom']}/{tile['x']}/{tile['y']}.tif"
         data = client.get(address)
@@ -241,12 +246,10 @@ def capture_osm(stage, run, folder, client, progress):
         write_bytes(folder / name, data)
         stage["results"].append(dict(tile, filename=name, source_url=address, captured_at=now()))
         yield
-        progress(label, i + 1, count)
-    if failure is not None:
-        raise failure
+        progress("Downloading terrain tiles", i + 1, total(stage))
 
 
-STAGES = dict(streetview=capture_streetview, satellite=capture_satellite, osm=capture_osm)
+STAGES = dict(streetview=capture_streetview, satellite=capture_satellite, osm=capture_osm, terrain=capture_terrain)
 
 
 def export(run, folder, progress, *, rebuild=True):
@@ -261,11 +264,9 @@ def export(run, folder, progress, *, rebuild=True):
             write_json(folder / "satellite/patches.geojson",
                        collection(feature("Polygon", [tile_ring(p)], p) for p in stage["results"]))
             satellite.merge(stage, folder, progress)
-        else:
-            terrain_results = [item for item in stage["results"] if "x" in item]
-            count = stage["grid"]["rows"] * stage["grid"]["columns"]
-            if len(terrain_results) == count and (rebuild or not (folder / "terrain.tif").is_file()):
-                terrain.merge(folder / "terrain.tif", folder, terrain_results, stage["grid"], progress)
+        elif stage["mode"] == "terrain":
+            if len(stage["results"]) == total(stage) and (rebuild or not (folder / "terrain.tif").is_file()):
+                terrain.merge(folder / "terrain.tif", folder, stage["results"], stage["grid"], progress)
     run["exports_saved"] = True
     write_json(folder / "manifest.json", run)
 
@@ -334,12 +335,18 @@ def download(run, folder, client, progress):
             if len(stage["results"]) == total(stage):
                 continue
             # Checkpoint slow items every time and quick ones in batches.
-            slow = stage["mode"] == "osm" or stage.get("full_sphere")
-            for _ in STAGES[stage["mode"]](stage, run, folder, client, progress):
-                unsaved += 1
-                if slow or unsaved >= 50 or time.monotonic() - saved_at >= 30:
-                    write_json(folder / "manifest.json", run)
-                    saved_at, unsaved = time.monotonic(), 0
+            slow = stage["mode"] in ("osm", "terrain") or stage.get("full_sphere")
+            try:
+                for _ in STAGES[stage["mode"]](stage, run, folder, client, progress):
+                    unsaved += 1
+                    if slow or unsaved >= 50 or time.monotonic() - saved_at >= 30:
+                        write_json(folder / "manifest.json", run)
+                        saved_at, unsaved = time.monotonic(), 0
+            except (OSError, ValueError) as error:
+                if stage["mode"] != "osm":
+                    raise
+                # Keep terrain usable if the map fails; report the error after saving it.
+                errors.append(error)
             write_json(folder / "manifest.json", run)
     except (Exception, KeyboardInterrupt) as error:
         errors.append(error)
@@ -364,12 +371,11 @@ def load(folder, *, check_files=True):
         raise ValueError("Unsupported capture format. Start a new capture with this version of Aleph.")
     bounds(run["bounds"], minimum=0)
     options = settings(run["options"])
-    if [s["mode"] for s in run["stages"]] != options["include"]:
+    if [s["mode"] for s in run["stages"]] != modes(options["include"]):
         raise ValueError("Invalid saved stages.")
     for stage in run["stages"]:
-        if stage["mode"] != "streetview":
-            zoom = options["satellite_zoom" if stage["mode"] == "satellite" else "terrain_zoom"]
-            if stage["grid"] != grid(run["bounds"], zoom):
+        if stage["mode"] in ("satellite", "terrain"):
+            if stage["grid"] != grid(run["bounds"], options[stage["mode"] + "_zoom"]):
                 raise ValueError("Invalid saved tile grid.")
         if len(stage["results"]) > total(stage):
             raise ValueError("Invalid saved progress.")
