@@ -24,7 +24,7 @@ from PIL import Image
 
 DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "aleph"
 APP_AGENT = "Aleph/0.1"
-WORKERS = 16
+WORKERS = 8
 BROWSER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15"
 
 
