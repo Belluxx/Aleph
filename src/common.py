@@ -7,7 +7,10 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import cached_property
@@ -21,6 +24,7 @@ from PIL import Image
 
 DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "aleph"
 APP_AGENT = "Aleph/0.1"
+WORKERS = 16
 BROWSER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15"
 
 
@@ -165,6 +169,7 @@ class CachedClient(Client):
     """Cache successful quick-query responses for one week."""
 
     hits = misses = 0
+    lock = threading.Lock()
 
     def get(self, address, **kwargs):
         if kwargs.get("destination") is not None:
@@ -172,12 +177,40 @@ class CachedClient(Client):
         key = hashlib.sha256(address.encode()).hexdigest()
         path = self.cache_dir / key
         if not self.refresh and path.is_file() and time.time() - path.stat().st_mtime < 7 * 24 * 60 * 60:
-            self.hits += 1
+            with self.lock:
+                self.hits += 1
             return path.read_bytes()
         result = super().get(address, **kwargs)
         write_bytes(path, result)
-        self.misses += 1
+        with self.lock:
+            self.misses += 1
         return result
+
+
+def fetch(client, addresses, *, missing_ok=False):
+    """Yield responses in order with a few requests in flight; with missing_ok, None marks missing data."""
+    def get(address):
+        try:
+            return client.get(address, missing_ok=missing_ok)
+        except MissingImagery:
+            return None
+
+    # Keep requests sequential when the user asks for pauses between them.
+    if client.delay:
+        yield from map(get, addresses)
+        return
+    pending = deque()
+    with ThreadPoolExecutor(WORKERS) as pool:
+        try:
+            for address in addresses:
+                pending.append(pool.submit(get, address))
+                if len(pending) > 2 * WORKERS:
+                    yield pending.popleft().result()
+            while pending:
+                yield pending.popleft().result()
+        finally:
+            for future in pending:
+                future.cancel()
 
 
 class Progress:

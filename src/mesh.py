@@ -14,47 +14,18 @@ import struct
 import sys
 import tempfile
 from array import array
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from itertools import accumulate
 
-from .common import MissingImagery, atomic_path
+from .common import atomic_path, fetch
 from .pbf import fields, unpack
 
 BASE = "https://kh.google.com/rt/earth/"
 LEAF, NODATA, USE_IMAGERY_EPOCH = 4, 8, 16
 JPEG = 1
-WORKERS = 16
 LOWEST, HIGHEST = -1000, 9000  # Heights searched for nodes, in meters from the sphere.
 GLB_LIMIT = 2**32
 TILES_PER_MESH = 64  # Unreal's Nanite allows 64 materials per mesh; Godot allows 256 surfaces.
 BITS = [bytes((byte >> i) & 1 for i in range(8)) for byte in range(256)]
-
-
-def fetch(client, addresses):
-    """Yield responses in order with a few requests in flight; None marks missing data."""
-    def get(address):
-        try:
-            return client.get(address, missing_ok=True)
-        except MissingImagery:
-            return None
-
-    # Keep requests sequential when the user asks for pauses between them.
-    if client.delay:
-        yield from map(get, addresses)
-        return
-    pending = deque()
-    with ThreadPoolExecutor(WORKERS) as pool:
-        try:
-            for address in addresses:
-                pending.append(pool.submit(get, address))
-                if len(pending) > 2 * WORKERS:
-                    yield pending.popleft().result()
-            while pending:
-                yield pending.popleft().result()
-        finally:
-            for future in pending:
-                future.cancel()
 
 
 def first(data):
@@ -161,7 +132,7 @@ def plan(client, area, level, progress, *, allow_empty=False):
     while pending:
         batch, pending = pending, []
         addresses = [f"{BASE}BulkMetadata/pb=!1m2!1s{path}!2u{epoch}" for path, epoch in batch]
-        for (head, epoch), data in zip(batch, fetch(client, addresses)):
+        for (head, epoch), data in zip(batch, fetch(client, addresses, missing_ok=True)):
             done += 1
             progress("Finding 3D mesh nodes", done)
             if data is None:

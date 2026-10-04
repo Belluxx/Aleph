@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .common import MissingImagery, number, open_image, save_image, url, write_bytes
+from .common import MissingImagery, fetch, number, open_image, save_image, url, write_bytes
 from .geo import Line, RoadIndex, clip, distance, grid, inside, tiles
 
 EXCLUDED = re.compile(r"^(construction|proposed|planned|abandoned|razed|demolished)$")
@@ -67,10 +67,11 @@ def coverage(client, area, progress):
     count = coverage_grid["rows"] * coverage_grid["columns"]
     found = {}
     progress("Finding panoramas", 0, count)
-    for i, tile in enumerate(tiles(coverage_grid), 1):
-        address = url("https://www.google.com/maps/photometa/ac/v1",
-                      pb=f"!1m1!1smaps_sv.tactile!6m3!1i{tile['x']}!2i{tile['y']}!3i17!8b1")
-        for view in parse_coverage(client.get(address)):
+    addresses = (url("https://www.google.com/maps/photometa/ac/v1",
+                     pb=f"!1m1!1smaps_sv.tactile!6m3!1i{tile['x']}!2i{tile['y']}!3i17!8b1")
+                 for tile in tiles(coverage_grid))
+    for i, data in enumerate(fetch(client, addresses), 1):
+        for view in parse_coverage(data):
             found[view["pano_id"]] = view
         progress("Finding panoramas", i, count)
     return list(found.values())
@@ -153,19 +154,21 @@ def save_sphere(client, metadata, zoom, target):
     columns, rows = math.ceil(width / tw), math.ceil(height / th)
     target = Path(target)
     cache = target.parent / ".sphere-tiles" / metadata["pano_id"] / f"{zoom}-{width}x{height}-{tw}x{th}"
+    positions = [(x, y) for y in range(rows) for x in range(columns)]
+    missing = [(x, y) for x, y in positions if not (cache / f"{x}-{y}.tile").is_file()]
+    addresses = (url("https://streetviewpixels-pa.googleapis.com/v1/tile", cb_client="maps_sv.tactile",
+                     panoid=metadata["pano_id"], zoom=zoom, x=x, y=y) for x, y in missing)
     with Image.new("RGB", (width, height)) as sphere:
-        for y in range(rows):
-            for x in range(columns):
-                client.check_cancel()
-                path = cache / f"{x}-{y}.tile"
-                cached = path.is_file()
-                data = path.read_bytes() if cached else client.get(
-                    url("https://streetviewpixels-pa.googleapis.com/v1/tile", cb_client="maps_sv.tactile",
-                        panoid=metadata["pano_id"], zoom=zoom, x=x, y=y), missing_ok=True)
-                with open_image(data, (tw, th)) as tile:
-                    if not cached:
-                        write_bytes(path, data)
-                    sphere.paste(tile, (x * tw, y * th))
+        for (x, y), data in zip(missing, fetch(client, addresses, missing_ok=True)):
+            if data is None:
+                raise MissingImagery("The requested image is not available.")
+            with open_image(data, (tw, th)) as tile:
+                write_bytes(cache / f"{x}-{y}.tile", data)
+                sphere.paste(tile, (x * tw, y * th))
+        for x, y in set(positions) - set(missing):
+            client.check_cancel()
+            with open_image((cache / f"{x}-{y}.tile").read_bytes(), (tw, th)) as tile:
+                sphere.paste(tile, (x * tw, y * th))
         client.check_cancel()
         save_image(sphere, target, quality=90)
     shutil.rmtree(cache)

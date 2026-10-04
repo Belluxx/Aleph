@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 from . import mesh, satellite, streetview, terrain
-from .common import MissingImagery, contained, now, number, open_image, positive, write_bytes, write_json
+from .common import MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
 from .geo import bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm", "mesh")
@@ -23,7 +23,7 @@ DEFAULT_OPTIONS = dict(
 )
 
 # Average connection speed / hardware timings, just to give an idea to the user, not precise
-REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.27, satellite_tile=0.25, terrain_tile=1.39,
+REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.02, satellite_tile=0.02, terrain_tile=0.13,
                        mesh_node=0.021)
 SPHERE_TILES = (1, 2, 8, 32, 128, 512)
 OSM_EXPORT_SECONDS = 10
@@ -208,15 +208,13 @@ def capture_streetview(stage, run, folder, client, progress):
 
 
 def capture_satellite(stage, run, folder, client, progress):
-    progress("Satellite", len(stage["results"]), total(stage))
-    for i, tile in enumerate(tiles(stage["grid"])):
-        if i < len(stage["results"]):
-            continue
-        address = f"https://mt1.google.com/vt/lyrs=s&x={tile['x']}&y={tile['y']}&z={tile['zoom']}"
+    done = len(stage["results"])
+    progress("Satellite", done, total(stage))
+    remaining = list(tiles(stage["grid"]))[done:]
+    addresses = [f"https://mt1.google.com/vt/lyrs=s&x={tile['x']}&y={tile['y']}&z={tile['zoom']}" for tile in remaining]
+    for tile, address, data in zip(remaining, addresses, fetch(client, addresses, missing_ok=True)):
         extension = run["options"]["satellite_format"]
-        try:
-            data = client.get(address, missing_ok=True)
-        except MissingImagery:
+        if data is None:
             # Persist the gap so resume and offline export keep it transparent.
             extension = "png"
             with BytesIO() as buffer, Image.new("RGBA", (256, 256)) as image:
@@ -233,8 +231,9 @@ def capture_satellite(stage, run, folder, client, progress):
                 f"_x{tile['x']}_y{tile['y']}.{extension}")
         write_bytes(folder / name, data)
         stage["results"].append(dict(tile, filename=name, source_url=address, captured_at=now()))
+        done += 1
         yield
-        progress("Satellite", i + 1, total(stage))
+        progress("Satellite", done, total(stage))
 
 
 def capture_osm(stage, run, folder, client, progress):
@@ -244,25 +243,26 @@ def capture_osm(stage, run, folder, client, progress):
 
 
 def capture_terrain(stage, run, folder, client, progress):
-    progress("Downloading terrain tiles", len(stage["results"]), total(stage))
-    for i, tile in enumerate(tiles(stage["grid"])):
-        if i < len(stage["results"]):
-            continue
-        address = f"https://elevation-tiles-prod.s3.amazonaws.com/geotiff/{tile['zoom']}/{tile['x']}/{tile['y']}.tif"
-        data = client.get(address)
+    done = len(stage["results"])
+    progress("Downloading terrain tiles", done, total(stage))
+    remaining = list(tiles(stage["grid"]))[done:]
+    addresses = [f"https://elevation-tiles-prod.s3.amazonaws.com/geotiff/{tile['zoom']}/{tile['x']}/{tile['y']}.tif"
+                 for tile in remaining]
+    for tile, address, data in zip(remaining, addresses, fetch(client, addresses)):
         terrain.validate(terrain.TIFF(BytesIO(data)), tile)
         name = f"terrain/tiles/terrain_z{tile['zoom']}_x{tile['x']}_y{tile['y']}.tif"
         write_bytes(folder / name, data)
         stage["results"].append(dict(tile, filename=name, source_url=address, captured_at=now()))
+        done += 1
         yield
-        progress("Downloading terrain tiles", i + 1, total(stage))
+        progress("Downloading terrain tiles", done, total(stage))
 
 
 def capture_mesh(stage, run, folder, client, progress):
     done = len(stage["results"])
     progress("3D mesh", done, total(stage))
     nodes = stage["nodes"][done:]
-    for node, data in zip(nodes, mesh.fetch(client, map(mesh.address, nodes))):
+    for node, data in zip(nodes, fetch(client, map(mesh.address, nodes), missing_ok=True)):
         if data is None:
             stage["results"].append(dict(status="skipped", reason="The 3D mesh node is not available."))
         else:
