@@ -38,6 +38,9 @@ def describe(run):
         elif mode == "osm":
             label = "OSM map"
             message = "1 extract" if estimate["osm_maps"] else "already saved"
+        elif mode == "mesh":
+            label = "3D mesh"
+            message = f"{estimate['mesh_nodes']:,} nodes down to level {stage['level']}"
         else:
             label = "Terrain"
             message = f"{estimate['terrain_tiles']:,} tiles"

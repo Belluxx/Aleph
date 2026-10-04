@@ -97,6 +97,7 @@
               <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="4"/></svg><strong>Street View</strong><input name="include" type="checkbox" value="streetview"></label>
               <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg><strong>Satellite imagery</strong><input name="include" type="checkbox" value="satellite"></label>
               <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m2 20 7-14 4 7 3-5 6 12H2Zm4-8 3 2 3-3M13 13l3 3 3-2"/></svg><strong>Map & terrain</strong><input name="include" type="checkbox" value="osm"></label>
+              <label><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/></svg><strong>3D mesh</strong><input name="include" type="checkbox" value="mesh"></label>
             </div>
             <p id="sources-error" class="field-error" role="status" hidden>Choose at least one source.</p>
           </fieldset>
@@ -121,6 +122,12 @@
                 <input id="sphere-zoom" class="resolution-slider" name="sphere_zoom" type="range" min="0" max="5" step="1" value="3">
                 <div class="resolution-scale" aria-hidden="true"><span>Lowest</span><span>Maximum</span></div>
               </div>
+            </div>
+            <div class="settings-group" data-source="mesh">
+              <h3 class="settings-divider"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/></svg>3D mesh</h3>
+              <div class="resolution-heading"><label for="mesh-level">Mesh detail</label><output id="mesh-level-value" for="mesh-level"></output></div>
+              <input id="mesh-level" class="resolution-slider" name="mesh_level" type="range" min="16" max="22" step="1">
+              <div class="resolution-scale" aria-hidden="true"><span>Lowest</span><span>Maximum</span></div>
             </div>
           </fieldset>
           <details id="advanced-settings" class="settings">

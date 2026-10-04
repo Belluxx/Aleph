@@ -10,20 +10,21 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import satellite, streetview, terrain
+from . import mesh, satellite, streetview, terrain
 from .common import MissingImagery, contained, now, number, open_image, positive, write_bytes, write_json
 from .geo import bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
 
-SOURCES = ("streetview", "satellite", "osm")
+SOURCES = ("streetview", "satellite", "osm", "mesh")
 FORMAT_VERSION = 4
 DEFAULT_OPTIONS = dict(
-    include=list(SOURCES), step=30, fov=75, depth="roads", streetview_format="jpg",
+    include=["streetview", "satellite", "osm"], step=30, fov=75, depth="roads", streetview_format="jpg",
     full_sphere=False, sphere_zoom=3,
-    delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14,
+    delay=0, satellite_zoom=18, satellite_format="jpg", terrain_zoom=14, mesh_level=21,
 )
 
 # Average connection speed / hardware timings, just to give an idea to the user, not precise
-REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.27, satellite_tile=0.25, terrain_tile=1.39)
+REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.27, satellite_tile=0.25, terrain_tile=1.39,
+                       mesh_node=0.021)
 SPHERE_TILES = (1, 2, 8, 32, 128, 512)
 OSM_EXPORT_SECONDS = 10
 
@@ -34,6 +35,10 @@ OSM_NOTES = {
 TERRAIN_NOTES = {
     "terrain": "Heights in meters (Int16 up to zoom 12, Float32 from zoom 13), EPSG:3857, without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
+}
+MESH_NOTES = {
+    "mesh": "Google Earth 3D photogrammetry as glTF binary with Google's original JPEG textures and baked-in lighting. Coordinates are meters from the rectangle's center at sea level: x east, y up, z south. Heights are approximate.",
+    "selection": "Nodes are saved as downloaded in mesh/nodes/. Finer nodes replace their parent's octants; triangles are kept when their center is inside the rectangle. Levels stop where Google's data ends; level 22 is the most detailed.",
 }
 
 README = b"""Aleph capture
@@ -49,6 +54,8 @@ satellite.png contains the same full-resolution pixels for easy viewing.
 Transparent pixels mark missing imagery or unfinished downloads.
 terrain.tif holds meters in EPSG:3857 (Int16 up to zoom 12, else Float32).
 Keep terrain/tiles/ for resume and offline export.
+mesh.glb is Google Earth's textured 3D mesh in meters around the center.
+Keep mesh/nodes/ for resume and offline export.
 Filenames in the manifest and GeoJSON are relative to this run folder.
 See manifest.json for settings, sources, imagery dates, and coverage notes.
 
@@ -65,11 +72,12 @@ def settings(values=None):
     options = {**DEFAULT_OPTIONS, **values}
     include = options["include"]
     if not isinstance(include, list) or not include or any(source not in SOURCES for source in include):
-        raise ValueError("Choose one or more sources: streetview, satellite, osm.")
+        raise ValueError("Choose one or more sources: streetview, satellite, osm, mesh.")
     options["include"] = [source for source in SOURCES if source in include]
     positive(options["step"], "step")
     number(options["delay"], "delay", 0)
-    for key, low, high in (("fov", 5, 175), ("sphere_zoom", 0, 5), ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14)):
+    for key, low, high in (("fov", 5, 175), ("sphere_zoom", 0, 5), ("satellite_zoom", 1, 21), ("terrain_zoom", 1, 14),
+                           ("mesh_level", 1, 22)):
         options[key] = number(options[key], key, low, high, whole=True)
     if type(options["full_sphere"]) is not bool:
         raise ValueError("full_sphere must be true or false.")
@@ -106,6 +114,9 @@ def plan(client, area, options, progress):
     if "osm" in options["include"]:
         stages.append(dict(mode="osm", results=[], notes=OSM_NOTES))
         stages.append(dict(mode="terrain", grid=grid(area, options["terrain_zoom"]), results=[], notes=TERRAIN_NOTES))
+    if "mesh" in options["include"]:
+        stage = mesh.plan(client, area, options["mesh_level"], progress, allow_empty=len(options["include"]) > 1)
+        stages.append(dict(stage, notes=MESH_NOTES))
     return dict(format="aleph-python", version=FORMAT_VERSION, bounds=area, options=options,
                 started_at=now(), state="planned", stages=stages)
 
@@ -115,6 +126,8 @@ def total(stage):
         return len(stage["samples"]) * (1 if stage["full_sphere"] else 2)
     if stage["mode"] == "osm":
         return 1
+    if stage["mode"] == "mesh":
+        return len(stage["nodes"])
     return stage["grid"]["rows"] * stage["grid"]["columns"]
 
 
@@ -124,7 +137,7 @@ def estimate(run):
     Excludes planning, initial regional PBF downloads, and final merged exports.
     Partly downloaded spheres are counted in full; their cached tiles may save time.
     """
-    counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0, terrain_tiles=0, osm_maps=0)
+    counts = dict(streetview_photos=0, streetview_stops=0, satellite_tiles=0, terrain_tiles=0, osm_maps=0, mesh_nodes=0)
     requests = dict.fromkeys(REQUEST_SECONDS, 0)
     for stage in run["stages"]:
         remaining = total(stage) - len(stage["results"])
@@ -141,6 +154,8 @@ def estimate(run):
             counts["satellite_tiles"] = requests["satellite_tile"] = remaining
         elif stage["mode"] == "osm":
             counts["osm_maps"] = remaining
+        elif stage["mode"] == "mesh":
+            counts["mesh_nodes"] = requests["mesh_node"] = remaining
         else:
             counts["terrain_tiles"] = requests["terrain_tile"] = remaining
     seconds = sum(count * REQUEST_SECONDS[kind] for kind, count in requests.items())
@@ -243,7 +258,25 @@ def capture_terrain(stage, run, folder, client, progress):
         progress("Downloading terrain tiles", i + 1, total(stage))
 
 
-STAGES = dict(streetview=capture_streetview, satellite=capture_satellite, osm=capture_osm, terrain=capture_terrain)
+def capture_mesh(stage, run, folder, client, progress):
+    done = len(stage["results"])
+    progress("3D mesh", done, total(stage))
+    nodes = stage["nodes"][done:]
+    for node, data in zip(nodes, mesh.fetch(client, map(mesh.address, nodes))):
+        if data is None:
+            stage["results"].append(dict(status="skipped", reason="The 3D mesh node is not available."))
+        else:
+            mesh.check(data)
+            name = f"mesh/nodes/{node[0]}.bin"
+            write_bytes(folder / name, data)
+            stage["results"].append(dict(filename=name))
+        done += 1
+        yield
+        progress("3D mesh", done, total(stage))
+
+
+STAGES = dict(streetview=capture_streetview, satellite=capture_satellite, osm=capture_osm, terrain=capture_terrain,
+              mesh=capture_mesh)
 
 
 def export(run, folder, progress, *, rebuild=True):
@@ -261,6 +294,9 @@ def export(run, folder, progress, *, rebuild=True):
         elif stage["mode"] == "terrain":
             if len(stage["results"]) == total(stage) and (rebuild or not (folder / "terrain.tif").is_file()):
                 terrain.merge(folder / "terrain.tif", folder, stage["results"], stage["grid"], progress)
+        elif stage["mode"] == "mesh":
+            if len(stage["results"]) == total(stage) and (rebuild or not (folder / "mesh.glb").is_file()):
+                mesh.export(folder / "mesh.glb", folder, stage, run["bounds"], progress)
     run["exports_saved"] = True
     write_json(folder / "manifest.json", run)
 
@@ -371,6 +407,8 @@ def load(folder, *, check_files=True):
         if stage["mode"] in ("satellite", "terrain"):
             if stage["grid"] != grid(run["bounds"], options[stage["mode"] + "_zoom"]):
                 raise ValueError("Invalid saved tile grid.")
+        if stage["mode"] == "mesh" and stage["level"] != options["mesh_level"]:
+            raise ValueError("Invalid saved mesh level.")
         if len(stage["results"]) > total(stage):
             raise ValueError("Invalid saved progress.")
         if not check_files:

@@ -81,7 +81,15 @@ alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 
 The command shows an estimate and asks before downloading. Add `--yes` to skip the prompt, or `--plan` to save a plan for later.
 
-Use `--sources` to select `streetview`, `satellite`, or `osm` (including terrain), or a combination.
+Use `--sources` to select `streetview`, `satellite`, or `osm` (including terrain), or a combination. These three are the default.
+
+Add `mesh` for Google Earth's textured 3D model of the area, saved as `mesh.glb`:
+
+```sh
+alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources mesh satellite -o captures
+```
+
+`--mesh-level 1–22` sets the detail (default: `21`). Each level halves the texel size; `22` is the most detailed (about 4 cm per texel) and needs about four times as many downloads as `21`. Coordinates in `mesh.glb` are meters from the rectangle's center: x east, y up, z south.
 
 Resume a capture or start a saved plan using its printed run folder:
 

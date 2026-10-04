@@ -10,7 +10,7 @@ const state = {config: null, captures: [], selected: null, map: null, ready: nul
   previousView: null, rotating: null, terrainFocus: null, refreshing: false, lastRefresh: 0, popup: null};
 const form = $("capture-form");
 const maxDrawLatitude = 85.0511287; // Remain inside Mercator bounds after rounding to seven decimals.
-const names = {streetview: "STREET VIEW", satellite: "SATELLITE", osm: "OSM", terrain: "TERRAIN"};
+const names = {streetview: "STREET VIEW", satellite: "SATELLITE", osm: "OSM", terrain: "TERRAIN", mesh: "3D MESH"};
 const resolutionNames = ["Lowest", "Very low", "Low", "Medium", "High", "Very high", "Maximum"];
 const sphereResolutionNames = ["Lowest", "Low", "Medium", "High", "Very high", "Maximum"];
 const layerGroups = {satellite: ["satellite"], buildings: ["buildings", "building-outlines"],
@@ -719,7 +719,7 @@ function renderCapturePanel() {
   for (const section of form.querySelectorAll("[data-source]")) {
     section.hidden = !form.querySelector(`input[name="include"][value="${section.dataset.source}"]`).checked;
   }
-  $("capture-settings").hidden = !["satellite", "streetview"].some((source) => form.querySelector(`input[name="include"][value="${source}"]`).checked);
+  $("capture-settings").hidden = !["satellite", "streetview", "mesh"].some((source) => form.querySelector(`input[name="include"][value="${source}"]`).checked);
   $("sources-error").hidden = sources > 0;
   $("start-capture").disabled = !state.config || !state.draftBounds || !sources || busy || Boolean(state.job?.active);
   $("start-capture-label").textContent = state.submitting ? "Planning…" : "Plan capture";
@@ -733,6 +733,10 @@ function renderResolution() {
   const sphereLabel = sphereResolutionNames[sphere.valueAsNumber];
   $("sphere-resolution-value").value = sphereLabel;
   sphere.setAttribute("aria-valuetext", sphereLabel);
+  const mesh = form.elements.mesh_level;
+  const meshLabel = resolutionNames[mesh.valueAsNumber - Number(mesh.min)];
+  $("mesh-level-value").value = meshLabel;
+  mesh.setAttribute("aria-valuetext", meshLabel);
   const input = form.elements.satellite_zoom;
   const label = resolutionNames[input.valueAsNumber - Number(input.min)];
   $("resolution-value").value = label;
@@ -944,7 +948,7 @@ async function planCapture(event) {
   const options = {include: data.getAll("include"), depth: data.get("depth"),
     full_sphere: data.get("full_sphere") === "true",
     streetview_format: data.get("streetview_format"), satellite_format: data.get("satellite_format")};
-  for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom", "sphere_zoom"]) options[key] = Number(data.get(key));
+  for (const key of ["step", "fov", "delay", "satellite_zoom", "terrain_zoom", "sphere_zoom", "mesh_level"]) options[key] = Number(data.get(key));
   const bounds = [...state.draftBounds];
   state.submitting = true;
   setDrawMode(false);
@@ -1000,6 +1004,7 @@ function showPlan(plan) {
     row("OSM map extracts", estimate.osm_maps.toLocaleString());
     row("Terrain tiles", estimate.terrain_tiles.toLocaleString());
   }
+  if (sources.includes("mesh")) row("3D mesh nodes", estimate.mesh_nodes.toLocaleString());
   $("plan-error").hidden = true;
   setDrawMode(false);
   renderCapturePanel();
@@ -1129,6 +1134,7 @@ function bindEvents() {
   $("edit-plan").addEventListener("click", editPlan);
   $("satellite-resolution").addEventListener("input", renderResolution);
   $("sphere-zoom").addEventListener("input", renderResolution);
+  $("mesh-level").addEventListener("input", renderResolution);
   form.addEventListener("change", renderCapturePanel);
   $("search").addEventListener("input", renderLibrary);
   $("refresh").addEventListener("click", () => refreshLibrary(true).catch((error) => notice(error.message)));

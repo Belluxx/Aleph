@@ -137,7 +137,7 @@ def _capture_command(commands):
     actions = captures.add_subparsers(dest="action", required=True)
     area = actions.add_parser("create", help="Plan and download an area with multiple sources")
     area.add_argument("--bbox", required=True, nargs=4, type=float, metavar=("S", "W", "N", "E"))
-    area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: all; osm includes terrain)")
+    area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: streetview satellite osm; osm includes terrain)")
 
     # Planning and confirmation.
     planning = area.add_mutually_exclusive_group()
@@ -158,6 +158,9 @@ def _capture_command(commands):
 
     # Terrain resolution.
     area.add_argument("--terrain-zoom", type=int, help="terrain zoom, 1–14 (default: 14)")
+
+    # Google Earth 3D mesh detail.
+    area.add_argument("--mesh-level", type=int, help="3D mesh detail level, 1–22 (default: 21); each level halves the texel size")
 
     # Requests, cache, and output shared by all capture sources.
     area.add_argument("--delay", type=float, help="pause between requests in seconds (default: 0)")
