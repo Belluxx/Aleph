@@ -13,8 +13,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from PIL import features
-
 from . import capture
 from .common import Client, contained, now
 from .dashboard_osm import display_osm
@@ -100,13 +98,11 @@ class Catalog:
             layers[mode] = dict(done=len(stage["results"]), total=capture.total(stage))
             if "grid" in stage:
                 layers[mode]["zoom"] = stage["grid"]["zoom"]
-        terrain_path = contained(folder, "terrain.tif")
         return dict(
             id=identity, bounds=run["bounds"], started_at=run["started_at"],
             state=run["state"], error=run.get("error"), revision=revision,
             exports_saved=run.get("exports_saved", False), options=run["options"], layers=layers,
             osm=contained(folder, "map.osm").is_file(),
-            terrain=terrain_path.is_file() and features.check("libtiff"),
         )
 
     def list(self):
@@ -343,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise FileNotFoundError("Unknown action.")
             if path == "/api/config":
                 return self.json(dict(token=self.server.token, root=str(self.server.catalog.root),
-                                      defaults=capture.DEFAULT_OPTIONS, terrain=features.check("libtiff")))
+                                      defaults=capture.DEFAULT_OPTIONS))
             if path == "/api/captures":
                 return self.json(self.server.catalog.list())
             if path == "/api/job":

@@ -438,10 +438,11 @@ async function selectCapture(identity, fit = true) {
     $("layer-satellite").disabled = !run.layers.satellite?.done;
     ["buildings", "roads", "water"].forEach((key) => $("layer-" + key).disabled = !run.osm);
     $("layer-photos").disabled = !run.layers.streetview?.done;
-    $("terrain").disabled = !run.terrain;
-    $("terrain").title = !state.config.terrain ? "Terrain viewing requires Pillow with libtiff support." : !run.terrain ? "No saved terrain is available in this capture." : "Tilt the map and show terrain heights.";
-    const newTerrain = run.terrain && !map.getSource("terrain");
-    if (!updating || newTerrain) $("terrain").checked = run.terrain;
+    const terrain = Boolean(run.layers.terrain?.done);
+    $("terrain").disabled = !terrain;
+    $("terrain").title = terrain ? "Tilt the map and show terrain heights." : "No saved terrain is available in this capture.";
+    const newTerrain = terrain && !map.getSource("terrain");
+    if (!updating || newTerrain) $("terrain").checked = terrain;
     if (run.layers.satellite && !map.getSource("satellite")) {
       // HTTP expiry refreshes incomplete regions; completed tiles stay cached.
       map.addSource("satellite", {type: "raster", tiles: [template("satellite")], tileSize: 256,
@@ -463,9 +464,9 @@ async function selectCapture(identity, fit = true) {
     }
     setSelection(null);
     // Load the bounded DEM from above, then focus at its elevation before tilting.
-    if (fit && run.terrain) fitCapture(false);
-    if (!updating || newTerrain || fit) applyTerrain(fit && run.terrain);
-    if (fit && !run.terrain) fitCapture();
+    if (fit && terrain) fitCapture(false);
+    if (!updating || newTerrain || fit) applyTerrain(fit && terrain);
+    if (fit && !terrain) fitCapture();
     if (run.osm && !map.getSource("osm")) loadOSM(run);
     if (run.layers.streetview && (!map.getSource("photos")
         || state.photoCount < run.layers.streetview.done)) {
