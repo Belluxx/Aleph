@@ -8,6 +8,24 @@ const STATES = {planned: "Planned", running: "Capturing", interrupted: "Interrup
 const NUMBERS = ["step", "fov", "sphere_zoom", "satellite_zoom", "terrain_zoom", "mesh_level", "delay",
                  "streetview_workers", "satellite_workers", "terrain_workers", "mesh_workers"];
 const EARTH = 6371008.8;
+// Level names shown under slider knobs.
+const SCALES = {
+  satellite_zoom: {12: "City", 13: "Town", 14: "District", 15: "Blocks", 16: "Buildings", 17: "Roofs", 18: "Cars",
+                   19: "Road markings", 20: "Details", 21: "Finest"},
+  terrain_zoom: {8: "Region", 9: "Province", 10: "Metro area", 11: "City", 12: "Town", 13: "District", 14: "Blocks"},
+  mesh_level: {14: "Hills", 15: "Districts", 16: "Blocks", 17: "Buildings", 18: "Roofs", 19: "Windows", 20: "Cars",
+               21: "Details", 22: "Finest"},
+  sphere_zoom: Object.fromEntries(["Thumbnail", "Low", "Medium", "High", "Very high", "Maximum"]
+    .map((name, z) => [z, `${name} · ${(512 * 2 ** z).toLocaleString("en-US")} px`])),
+};
+const ICONS = {
+  streetview: '<path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/>',
+  satellite: '<path d="M9.5 9.5h5v7h-5zM2 10h5v5H2zM17 10h5v5h-5zM4.5 10v5M19.5 10v5M7 12.5h2.5M14.5 12.5H17M12 9.5v-3M9.5 5c1.5 1.3 3.5 1.3 5 0"/>',
+  osm: '<path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>',
+  terrain: '<path d="M2 20 9 8l4 6 3-4 6 10z"/>',
+  mesh: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  map: '<path d="M12 4l9 5-9 5-9-5zM3 14l9 5 9-5"/>',
+};
 // Progress phases that a capture stage row already shows.
 const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tiles", "3D mesh"]);
 
@@ -18,6 +36,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const number = value => Math.round(value).toLocaleString("en-US");
 const plural = (count, one, many = `${one}s`) => `${number(count)} ${count === 1 ? one : many}`;
+const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const absolute = path => location.origin + path;
 const capturePath = (id, path = "") => `/api/captures/${encodeURIComponent(id)}${path}`;
@@ -388,9 +407,13 @@ function updateForm() {
   const options = readForm();
   for (const fieldset of $$(".source")) fieldset.classList.toggle("on", options.include.includes(fieldset.dataset.source));
   for (const field of $$("[data-camera]")) field.hidden = (field.dataset.camera === "sphere") !== options.full_sphere;
-  const labels = {satellite_zoom: z => `z${z}`, terrain_zoom: z => `z${z}`, mesh_level: level => level,
-                  sphere_zoom: z => `${number(512 * 2 ** z)} px`};
-  for (const output of $$("output[data-for]")) output.textContent = labels[output.dataset.for](options[output.dataset.for]);
+  for (const input of $$(".range input")) {
+    const range = input.parentElement, min = Number(input.min), max = Number(input.max);
+    range.style.setProperty("--at", (input.value - min) / (max - min));
+    range.style.setProperty("--steps", max - min);
+    $(".knob", range).textContent = input.value;
+    $(".tag", range).textContent = SCALES[input.name][input.value];
+  }
   $("#preview-button").disabled = !state.area || !options.include.length;
   store.set("options", options);
 }
@@ -426,18 +449,9 @@ function estimate() {
 
 function renderArea() {
   const area = state.area;
-  $("#area-empty").hidden = !!area;
-  $("#area-set").hidden = !area;
-  const redraw = $("#redraw");
-  redraw.hidden = false;
-  redraw.textContent = state.drawing ? "Cancel drawing" : area ? "Redraw" : "Draw area";
-  if (area) {
-    const [width, height] = size(area);
-    $("#area-size").textContent = dimensions(area);
-    $("#area-km").textContent = `${(width * height / 1e6).toFixed(width * height < 1e5 ? 3 : 2)} km²`;
-    $("#area-coordinates").textContent = `S ${area[0].toFixed(5)}  W ${area[1].toFixed(5)}\nN ${area[2].toFixed(5)}  E ${area[3].toFixed(5)}`;
-  }
-  $("#area-empty").textContent = state.drawing ? "Drag on the map to draw a rectangle." : "No area yet.";
+  $("#redraw").textContent = state.drawing ? "Cancel" : area ? "Redraw" : "Draw area";
+  $("#area").innerHTML = area ? `<strong>${esc(dimensions(area))}</strong>`
+    : `<span class="muted">${state.drawing ? "Drag on the map to draw it." : "No area yet."}</span>`;
   $("#preview-button").disabled = !area || !readForm().include.length;
 }
 
@@ -512,13 +526,13 @@ function hoverCapture(id) {
 // Preview
 
 const stageRows = {
-  streetview: s => ["stops", plural(s.photos, s.sphere ? "sphere" : "photo"), !s.meters ? "No mapped roads at this depth"
+  streetview: s => [plural(s.photos, s.sphere ? "sphere" : "photo"), !s.meters ? "No mapped roads at this depth"
     : !s.stops ? "No panoramas on the selected roads"
     : `${plural(s.stops, "stop")} along ${meters(s.meters)} of road` + (s.gaps ? ` · ${plural(s.gaps, "spacing gap")}` : "")],
-  satellite: s => ["grid", plural(s.tiles, "tile"), `${number(s.width)} × ${number(s.height)} px · ${resolution(s.meters_per_pixel)}`],
-  osm: () => ["solid", "1 extract", "Clipped from a Geofabrik regional file"],
-  terrain: s => ["dashed", plural(s.tiles, "tile"), `Zoom ${s.zoom} · ${resolution(s.meters_per_pixel)}`],
-  mesh: s => ["cube", plural(s.nodes, "node"), `Detail level ${s.level}`],
+  satellite: s => [plural(s.tiles, "tile"), `${number(s.width)} × ${number(s.height)} px · ${resolution(s.meters_per_pixel)}`],
+  osm: () => ["1 extract", "Clipped from a Geofabrik regional file"],
+  terrain: s => [plural(s.tiles, "tile"), `Zoom ${s.zoom} · ${resolution(s.meters_per_pixel)}`],
+  mesh: s => [plural(s.nodes, "node"), `Detail level ${s.level}`],
 };
 
 function renderPreview() {
@@ -534,8 +548,8 @@ function renderPreview() {
   $("#plan-error").textContent = state.planError || "";
   if (!state.preview) return;
   $("#plan-stages").innerHTML = Object.entries(state.preview.stages).map(([mode, info]) => {
-    const [swatch, value, detail] = stageRows[mode](info);
-    return `<li><i class="swatch ${swatch}"></i><strong>${NAMES[mode]}</strong><span class="value">${esc(value)}</span>
+    const [value, detail] = stageRows[mode](info);
+    return `<li>${icon(mode)}<strong>${NAMES[mode]}</strong><span class="value">${esc(value)}</span>
       <span class="detail">${esc(detail)}</span></li>`;
   }).join("");
   $("#plan-time").textContent = `~ ${duration(state.preview.seconds)}`;
@@ -647,15 +661,18 @@ function renderCapture() {
   $("#capture-meta").textContent = `${STATES[status]} · ${dimensions(c.bounds)}`;
   $("#progress").hidden = !live;
   if (live) {
-    $("#phase").hidden = DOWNLOADS.has(job.phase) && !job.stopping;
+    const downloadPhase = DOWNLOADS.has(job.phase) && !job.stopping;
+    $("#phase").hidden = downloadPhase;
     renderProgress($("#phase"), job);
     const downloading = Object.values(job.stages).some(stage => stage.done < stage.total);
     $("#progress .label").textContent = downloading ? `Capturing · about ${duration(job.seconds)} left` : "Building files";
+    // Only the stage downloading now gets a bar, unless the phase line below already shows one.
+    const active = downloadPhase && Object.keys(job.stages).find(mode => job.stages[mode].done < job.stages[mode].total);
     $("#progress-stages").innerHTML = Object.entries(job.stages).map(([mode, s]) => {
       const finished = s.done >= s.total;
-      return `<li class="${finished ? "done" : ""}"><span>${NAMES[mode]}</span>
-        <span class="value">${finished ? "Done" : `${number(s.done)} / ${number(s.total)}`}</span>
-        <span class="bar"><i style="width:${(s.done / Math.max(1, s.total) * 100).toFixed(1)}%"></i></span></li>`;
+      const bar = mode === active ? `<span class="bar"><i style="width:${(s.done / Math.max(1, s.total) * 100).toFixed(1)}%"></i></span>` : "";
+      return `<li class="${finished ? "done" : ""}">${icon(mode)}<span>${NAMES[mode]}</span>
+        <span class="value">${finished ? "Done" : `${number(s.done)} / ${number(s.total)}`}</span>${bar}</li>`;
     }).join("");
   }
   // Stopping on request is not an error worth showing.
@@ -684,26 +701,27 @@ function renderLayers() {
   const groups = [];
   if (s.streetview) {
     const skipped = s.streetview.skipped ? ` · ${number(s.streetview.skipped)} skipped` : "";
-    groups.push(["Street View", toggle("photos", "Photos", `${number(state.photos.length)}${skipped}`)
+    groups.push(["streetview", toggle("photos", "Photos", `${number(state.photos.length)}${skipped}`)
       + toggle("route", "Planned route")]);
   }
   if (s.satellite) {
-    groups.push(["Satellite", toggle("satellite", "Imagery", `z${s.satellite.zoom} · ${tileCount("satellite")}`)]);
+    groups.push(["satellite", toggle("satellite", "Imagery", `zoom ${s.satellite.zoom} · ${tileCount("satellite")}`)]);
   }
   if (s.osm) {
     const saved = state.live.osm || s.osm.done;
     const note = saved ? "" : "not saved";
-    groups.push(["OSM map", toggle("buildings", "Buildings", note, !saved) + toggle("roads", "Roads and paths", note, !saved)
+    groups.push(["osm", toggle("buildings", "Buildings", note, !saved) + toggle("roads", "Roads and paths", note, !saved)
       + toggle("water", "Water and land", note, !saved)]);
   }
-  if (s.terrain) groups.push(["Terrain", toggle("terrain", "Hillshade", `z${s.terrain.zoom} · ${tileCount("terrain")}`)]);
+  if (s.terrain) groups.push(["terrain", toggle("terrain", "Hillshade", `zoom ${s.terrain.zoom} · ${tileCount("terrain")}`)]);
   if (s.mesh) {
     const glb = c.files["mesh.glb"];
-    groups.push(["3D mesh", `<p class="toggle"><i class="swatch cube"></i><span>mesh.glb</span><span class="value">${
+    groups.push(["mesh", `<p class="toggle"><span>mesh.glb</span><span class="value">${
       glb ? megabytes(glb) : `${number(s.mesh.done)} / ${plural(s.mesh.total, "node")}`}</span></p>`]);
   }
-  groups.push(["Map", toggle("outline", "Capture outline") + toggle("basemap", "Basemap")]);
-  $("#layers").innerHTML = groups.map(([name, rows]) => `<li class="group"><p>${name}</p>${rows}</li>`).join("");
+  groups.push(["map", toggle("outline", "Capture outline") + toggle("basemap", "Basemap")]);
+  $("#layers").innerHTML = groups.map(([mode, rows]) =>
+    `<li class="group"><p>${icon(mode)}${NAMES[mode] ?? "Map"}</p>${rows}</li>`).join("");
 }
 
 function tileCount(mode) {
@@ -981,6 +999,7 @@ async function init() {
   state.config = await api("/api/config");
   $("#root").textContent = state.config.root;
   $("#root").title = state.config.root;
+  for (const slot of $$("[data-icon]")) slot.outerHTML = icon(slot.dataset.icon);
   fillForm({...state.config.defaults, ...store.get("options", {})});
 
   const view = store.get("view", {center: [12.49, 41.89], zoom: 2});
