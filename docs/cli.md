@@ -103,6 +103,14 @@ Rebuild outputs from downloaded files, offline:
 alephgeo capture export captures/RUN_FOLDER
 ```
 
+## Open the dashboard
+
+```sh
+alephgeo dashboard -o captures
+```
+
+It lists the captures in `captures`, including ones made with `capture create`, and can resume stopped ones. `--port` changes the local port (default: `8100`) and `--no-browser` skips opening a tab. Quitting while a capture runs stops it so it can be resumed later.
+
 ## Use in scripts
 
 Add `--json` for one JSON result on stdout; progress stays on stderr.

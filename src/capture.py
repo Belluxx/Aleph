@@ -12,7 +12,7 @@ from PIL import Image
 
 from . import mesh, satellite, streetview, terrain
 from .common import WORKERS, MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
-from .geo import bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
+from .geo import MERCATOR_RADIUS, bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm", "mesh")
 FORMAT_VERSION = 4
@@ -174,6 +174,12 @@ def estimate(run):
     seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
     seconds += max(0, sum(requests.values()) - 1) * options["delay"]
     return dict(counts, seconds=math.ceil(seconds))
+
+
+def resolution(area, zoom, tile_size=256):
+    """Approximate ground meters per pixel at the middle of the area."""
+    latitude = math.radians((area[0] + area[2]) / 2)
+    return 2 * math.pi * MERCATOR_RADIUS * math.cos(latitude) / (tile_size * 2**zoom)
 
 
 def photos(run, after=0):

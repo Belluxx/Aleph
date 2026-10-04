@@ -39,6 +39,16 @@ Then test with
 alephgeo --help
 ```
 
+## Open the dashboard
+
+```sh
+alephgeo dashboard -o captures
+```
+
+The dashboard opens in your browser at `http://127.0.0.1:8100`. Draw a rectangle on the map, choose the sources and their settings, check the preview and time estimate, then start the capture. Open any capture to show or hide each layer. Captures are saved in `captures`.
+
+The basemap comes from [OpenFreeMap](https://openfreemap.org) and needs an internet connection.
+
 ## Use the CLI
 
 Download a Street View photo or satellite image by place name:

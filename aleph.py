@@ -1,7 +1,6 @@
 """Find places, request imagery, and manage area captures."""
 
 import json
-import math
 import os
 import shutil
 import sys
@@ -11,7 +10,7 @@ from pathlib import Path
 from src import capture, places, quick
 from src.cli import parser
 from src.common import CachedClient, Client, Progress, RequestError, now
-from src.geo import MERCATOR_RADIUS, bounds
+from src.geo import bounds
 
 
 def style(text, code="1"):
@@ -32,8 +31,7 @@ def describe(run):
         elif mode == "satellite":
             label = "Satellite"
             g = stage["grid"]
-            latitude = math.radians((run["bounds"][0] + run["bounds"][2]) / 2)
-            scale = 2 * math.pi * MERCATOR_RADIUS * math.cos(latitude) / (256 * 2 ** g["zoom"])
+            scale = capture.resolution(run["bounds"], g["zoom"])
             message = f"{estimate['satellite_tiles']:,} tiles, {g['width']:,} × {g['height']:,} px at about {scale:.2f} m/px"
         elif mode == "osm":
             label = "OSM map"
@@ -190,8 +188,10 @@ def main(argv=None):
             return 0
         args = command.parse_args(argv)
         if args.command == "dashboard":
-            print("The dashboard is not available yet.", file=sys.stderr)
-            return 1
+            from src import dashboard
+
+            return dashboard.serve(args.output, args.port, cache_dir=args.cache_dir, refresh=args.refresh,
+                                   open_browser=not args.no_browser)
         if args.command != "capture":
             with Progress() as progress:
                 result = query(args, progress)

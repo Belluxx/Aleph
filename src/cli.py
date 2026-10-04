@@ -192,4 +192,8 @@ def _capture_command(commands):
 
 
 def _dashboard_command(commands):
-    commands.add_parser("dashboard", help="Open the local capture dashboard (not available yet)")
+    dashboard = commands.add_parser("dashboard", help="Draw, capture, and explore areas in the browser")
+    dashboard.add_argument("-o", "--output", type=Path, default=Path("."), help="folder holding captures (default: current directory)")
+    dashboard.add_argument("--port", type=int, default=8100, help="local port (default: %(default)s)")
+    dashboard.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
+    _cache_options(dashboard)

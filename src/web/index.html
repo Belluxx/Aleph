@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aleph</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7.5' fill='%23F8F1E5' stroke='%2334302B'/%3E%3Cpath d='M6 1c-1 3 2 5 1 7s2 4 3 7' stroke='%23FF4938' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English&display=swap">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <aside class="panel">
+    <header class="brand">
+      <a href="#/" aria-label="Aleph, all captures">
+        <svg class="logo" viewBox="4 4 88 88" aria-hidden="true">
+          <defs><clipPath id="logo-world"><circle cx="48" cy="48" r="36"/></clipPath></defs>
+          <g clip-path="url(#logo-world)">
+            <circle cx="48" cy="48" r="36" class="logo-paper"/>
+            <g class="logo-lines" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5">
+              <path d="M7 30.2C12.4 26.3 17.8 24.1 22.1 24.7 26.6 24.9 28.6 27.5 29.7 31.1 31.2 35.3 29.2 39.8 27.5 44.1 25.6 48 25.1 51.2 26.3 54.5 28.2 59.1 32.8 62.1 34.4 67 36 71 35 74.8 33.9 79.1L30.1 89"/>
+              <path d="M5 43.3C9.2 39.2 13.5 36.8 16.2 37.7 19.6 38.2 20.1 40.7 19.7 43.2 19.8 47.3 17.5 51.1 17.7 56 17.4 60 18.9 63.3 21.4 66.5 24.3 70.3 27 73.1 26.1 77.7 25.9 80.2 24.2 82.2 22.8 84.2"/>
+              <path d="M5 60.3C8.2 57.4 11.1 58.7 12.1 62.2 13.9 65.6 13.4 70.3 11.8 74"/>
+              <path d="M53.8 8C56.1 15.1 57.3 23.2 59.8 30.1 62.2 37.4 64.4 43.9 68.9 49.8 74.2 57.1 80.4 62.1 89.2 67.3"/>
+              <path d="M71.1 12C71.5 18.3 73 23.9 74.7 29.4 76.9 35.1 81.4 39.7 85.2 43.2L91.1 47"/>
+              <path d="M43 26.2C49.4 27.2 55 26.5 61.2 25.8 67.3 25.4 72.3 24.1 77.2 25.3 80.3 25.5 82.3 27.3 85 28.1"/>
+              <path d="M47 44.2C52.4 44.8 58.5 43.7 63.2 42.4 69.1 40.9 73.4 38.3 78.7 38.1 82.2 37.6 85.7 39.6 89 40.9"/>
+              <path d="M55 60.2C60.1 60.8 64.7 59.1 68.6 57.1 73.4 55 77.1 53 82 53.1L88 53.3"/>
+              <path d="M41.8 86C40.9 81.3 42.4 77.2 45.6 76 48.2 74.4 51.3 75.4 54.2 78.2 57.5 81 60.5 82 64.2 81.5 66.2 81.5 68.3 80 70 78.8"/>
+            </g>
+            <path class="logo-river" d="M35.8 7.5C32.6 12.2 33.2 16.4 34.6 20.2 36 24.1 39.2 27.4 40.8 31.7 42.5 36 39.6 41.2 37.7 46.6 35.5 52.8 39.1 58.6 45.3 61.9 51.1 65.5 55.6 66.8 59.2 71.3 62.4 75.6 59.1 81.9 54.4 85.2L59.8 89C66.1 82 68.6 76.7 64.4 69.7 61.1 64.1 54.7 61.4 50.8 59.3 46.1 56.6 42 54.4 43.1 49.9 44.6 44.7 48 38.9 47 33.9 46.7 28.6 42.6 24.8 40.5 20.3 38.7 16.7 39.4 13.4 42 10.2Z"/>
+          </g>
+          <circle cx="48" cy="48" r="36" class="logo-rim"/>
+        </svg>
+        <span>Aleph</span>
+      </a>
+    </header>
+
+    <!-- Library -->
+    <section id="library" class="view" hidden>
+      <div class="scroll">
+        <div class="heading">
+          <h1>Captures <span id="capture-count" class="count"></span></h1>
+        </div>
+        <ol id="captures" class="captures"></ol>
+      </div>
+      <footer class="actions">
+        <p class="root" title="Captures folder"><span class="label">Folder</span><code id="root"></code></p>
+        <a class="button primary wide" href="#/new">New capture</a>
+      </footer>
+    </section>
+
+    <!-- New capture: area, sources, settings -->
+    <section id="new" class="view" hidden>
+      <form id="settings" class="scroll" novalidate autocomplete="off">
+        <div class="heading">
+          <a class="back" href="#/">← Captures</a>
+          <h1>New capture</h1>
+        </div>
+
+        <section class="block">
+          <h2 class="label">Area</h2>
+          <div id="area" class="area">
+            <p id="area-empty" class="muted">Drag on the map to draw a rectangle.</p>
+            <div id="area-set" hidden>
+              <p class="area-size"><strong id="area-size"></strong> <span id="area-km" class="muted"></span></p>
+              <p id="area-coordinates" class="coordinates"></p>
+            </div>
+          </div>
+          <button id="redraw" type="button" class="small" hidden>Redraw</button>
+        </section>
+
+        <section class="block">
+          <h2 class="label">Sources</h2>
+
+          <fieldset class="source" data-source="streetview">
+            <label class="source-head"><input type="checkbox" name="include" value="streetview"><span>Street View</span><output class="estimate"></output></label>
+            <div class="fields">
+              <label class="field"><span>Roads</span>
+                <span class="segmented">
+                  <label><input type="radio" name="depth" value="main"><span>Main</span></label>
+                  <label><input type="radio" name="depth" value="roads"><span>Roads</span></label>
+                  <label><input type="radio" name="depth" value="all"><span>All paths</span></label>
+                </span>
+              </label>
+              <label class="field"><span>Spacing</span><span class="unit"><input type="number" name="step" min="1" step="any"><i>m</i></span></label>
+              <label class="field"><span>Camera</span>
+                <span class="segmented">
+                  <label><input type="radio" name="camera" value="sides"><span>Left + right</span></label>
+                  <label><input type="radio" name="camera" value="sphere"><span>360° sphere</span></label>
+                </span>
+              </label>
+              <label class="field" data-camera="sides"><span>Field of view</span><span class="unit"><input type="number" name="fov" min="5" max="175" step="1"><i>°</i></span></label>
+              <label class="field" data-camera="sphere"><span>Resolution</span><span class="range"><input type="range" name="sphere_zoom" min="0" max="5" step="1"><output data-for="sphere_zoom"></output></span></label>
+              <label class="field"><span>Format</span>
+                <span class="segmented">
+                  <label><input type="radio" name="streetview_format" value="jpg"><span>JPG</span></label>
+                  <label><input type="radio" name="streetview_format" value="png"><span>PNG</span></label>
+                </span>
+              </label>
+              <label class="field"><span>Parallel requests</span><input type="number" name="streetview_workers" min="1" max="64" step="1"></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="source" data-source="satellite">
+            <label class="source-head"><input type="checkbox" name="include" value="satellite"><span>Satellite</span><output class="estimate"></output></label>
+            <div class="fields">
+              <label class="field"><span>Zoom</span><span class="range"><input type="range" name="satellite_zoom" min="12" max="21" step="1"><output data-for="satellite_zoom"></output></span></label>
+              <p class="detail" data-detail="satellite"></p>
+              <label class="field"><span>Tile format</span>
+                <span class="segmented">
+                  <label><input type="radio" name="satellite_format" value="jpg"><span>JPG</span></label>
+                  <label><input type="radio" name="satellite_format" value="png"><span>PNG</span></label>
+                </span>
+              </label>
+              <label class="field"><span>Parallel requests</span><input type="number" name="satellite_workers" min="1" max="64" step="1"></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="source" data-source="osm">
+            <label class="source-head"><input type="checkbox" name="include" value="osm"><span>OSM map + terrain</span><output class="estimate"></output></label>
+            <div class="fields">
+              <p class="detail">OpenStreetMap data clipped to the area, and elevation tiles.</p>
+              <label class="field"><span>Terrain zoom</span><span class="range"><input type="range" name="terrain_zoom" min="8" max="14" step="1"><output data-for="terrain_zoom"></output></span></label>
+              <p class="detail" data-detail="terrain"></p>
+              <label class="field"><span>Parallel requests</span><input type="number" name="terrain_workers" min="1" max="64" step="1"></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="source" data-source="mesh">
+            <label class="source-head"><input type="checkbox" name="include" value="mesh"><span>3D mesh</span><output class="estimate"></output></label>
+            <div class="fields">
+              <p class="detail">Google Earth photogrammetry, saved as mesh.glb.</p>
+              <label class="field"><span>Detail level</span><span class="range"><input type="range" name="mesh_level" min="14" max="22" step="1"><output data-for="mesh_level"></output></span></label>
+              <label class="field"><span>Parallel requests</span><input type="number" name="mesh_workers" min="1" max="64" step="1"></label>
+            </div>
+          </fieldset>
+        </section>
+
+        <details class="block advanced">
+          <summary class="label">Advanced</summary>
+          <label class="field"><span>Pause between requests</span><span class="unit"><input type="number" name="delay" min="0" step="any"><i>s</i></span></label>
+          <p class="detail">A pause also makes requests sequential.</p>
+        </details>
+      </form>
+      <footer class="actions">
+        <p id="settings-error" class="error" hidden></p>
+        <button id="preview-button" class="primary wide" type="submit" form="settings" disabled>Preview</button>
+      </footer>
+    </section>
+
+    <!-- Preview of a planned capture -->
+    <section id="preview" class="view" hidden>
+      <div class="scroll">
+        <div class="heading">
+          <button id="preview-back" type="button" class="back">← Settings</button>
+          <h1>Preview</h1>
+        </div>
+        <div id="planning" class="block" hidden>
+          <p class="label">Planning</p>
+          <div class="progress"><div class="bar"><i></i></div><p class="progress-text"></p></div>
+        </div>
+        <div id="plan" hidden>
+          <ul id="plan-stages" class="stages"></ul>
+          <div class="block total">
+            <p class="label">Estimated time</p>
+            <p id="plan-time" class="big"></p>
+            <p class="detail">Excludes the first download of a regional OSM file and building the final files.</p>
+          </div>
+        </div>
+        <p id="plan-error" class="error" hidden></p>
+      </div>
+      <footer class="actions">
+        <button id="cancel-plan" type="button" class="wide" hidden>Cancel</button>
+        <button id="start" type="button" class="accent wide" hidden>Start capture</button>
+      </footer>
+    </section>
+
+    <!-- One capture: live progress and results -->
+    <section id="capture" class="view" hidden>
+      <div class="scroll">
+        <div class="heading">
+          <a class="back" href="#/">← Captures</a>
+          <h1 id="capture-title"></h1>
+          <p id="capture-meta" class="meta"></p>
+        </div>
+        <div id="progress" class="block" hidden>
+          <p class="label">Capturing</p>
+          <ul id="progress-stages" class="stages compact"></ul>
+          <div id="phase" class="progress"><div class="bar"><i></i></div><p class="progress-text"></p></div>
+        </div>
+        <p id="capture-error" class="error" hidden></p>
+        <div class="block">
+          <h2 class="label">Layers</h2>
+          <ul id="layers" class="layers"></ul>
+        </div>
+        <div class="block">
+          <h2 class="label">Files</h2>
+          <ul id="files" class="files"></ul>
+          <p class="root"><code id="folder"></code><button id="copy-folder" type="button" class="small">Copy path</button></p>
+        </div>
+      </div>
+      <footer class="actions">
+        <button id="stop" type="button" class="wide" hidden>Stop</button>
+        <button id="resume" type="button" class="primary wide" hidden>Resume capture</button>
+      </footer>
+    </section>
+  </aside>
+
+  <main class="stage">
+    <div id="map"></div>
+    <form id="search" class="search" role="search">
+      <input type="search" name="q" placeholder="Search places" aria-label="Search places" autocomplete="off">
+      <ol id="search-results" hidden></ol>
+    </form>
+    <p id="hint" class="hint" hidden>Drag to draw the capture area · Esc to pan instead</p>
+    <figure id="viewer" class="viewer" hidden>
+      <img id="viewer-image" alt="">
+      <figcaption>
+        <div id="viewer-text"></div>
+        <div class="viewer-actions">
+          <button id="viewer-prev" type="button" class="small" aria-label="Previous photo">←</button>
+          <button id="viewer-next" type="button" class="small" aria-label="Next photo">→</button>
+          <a id="viewer-link" class="button small" target="_blank" rel="noopener">Google Maps ↗</a>
+          <button id="viewer-close" type="button" class="small" aria-label="Close">×</button>
+        </div>
+      </figcaption>
+    </figure>
+  </main>
+</body>
+</html>

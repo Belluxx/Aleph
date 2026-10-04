@@ -16,3 +16,6 @@ alephgeo = "aleph:main"
 [tool.setuptools]
 py-modules = ["aleph"]
 packages = ["src"]
+
+[tool.setuptools.package-data]
+src = ["web/*"]
