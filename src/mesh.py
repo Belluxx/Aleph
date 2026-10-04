@@ -27,6 +27,7 @@ JPEG = 1
 WORKERS = 16
 LOWEST, HIGHEST = -1000, 9000  # Heights searched for nodes, in meters from the sphere.
 GLB_LIMIT = 2**32
+TILES_PER_MESH = 64  # Unreal's Nanite allows 64 materials per mesh; Godot allows 256 surfaces.
 BITS = [bytes((byte >> i) & 1 for i in range(8)) for byte in range(256)]
 
 
@@ -317,9 +318,13 @@ def crop(area, axes, radius):
 
 
 def export(path, folder, stage, area, progress):
-    """Join saved nodes into one glTF binary in a local east/north/up frame around the center."""
+    """Join saved nodes into one glTF binary in a local east/north/up frame around the center.
+
+    Each glTF mesh holds up to TILES_PER_MESH textured tiles from one octree block, named after
+    its first tile: viewers import few objects, and Blender's import slows with many per mesh.
+    """
     nodes, results = stage["nodes"], stage["results"]
-    radius = stage["radius"]
+    radius, block = stage["radius"], max(1, stage["level"] - 4)
     lat, lon = (area[0] + area[2]) / 2, (area[1] + area[3]) / 2
     axes = frame(lat, lon)
     inside = crop(area, axes, radius)
@@ -327,9 +332,7 @@ def export(path, folder, stage, area, progress):
     missing = {node[0] for node, result in zip(nodes, results) if result.get("status") == "skipped"}
     saved = [(node, result["filename"]) for node, result in zip(nodes, results) if "filename" in result]
     gltf = dict(
-        asset=dict(version="2.0", generator="Aleph", copyright="© Google",
-                   extras=dict(latitude=lat, longitude=lon, radius=radius, bounds=list(area),
-                               frame="meters east (x), up (y), and south (z) of the center at sea level")),
+        asset=dict(version="2.0", generator="Aleph", copyright="© Google"),
         scene=0, scenes=[dict(nodes=[])], nodes=[], meshes=[], materials=[], textures=[], images=[],
         accessors=[], bufferViews=[], samplers=[dict(magFilter=9729, minFilter=9987, wrapS=33071, wrapT=33071)],
         extensionsUsed=["KHR_materials_unlit"],
@@ -348,11 +351,13 @@ def export(path, folder, stage, area, progress):
                 raise ValueError("The 3D mesh exceeds the 4 GiB glTF limit. Use a smaller area or lower mesh level.")
             return len(gltf["bufferViews"]) - 1
 
+        # Nodes are sorted by path, so each block's nodes are consecutive.
+        key = None
         for done, (node, filename) in enumerate(saved, 1):
             mask = node[3] & ~sum(1 << k for k in range(8) if f"{node[0]}{k}" in missing)
             data = (folder / filename).read_bytes()
             for part, (positions, texcoords, indices, jpeg) in enumerate(decode(data, mask, axes, radius, inside)):
-                i, k = len(gltf["meshes"]), len(gltf["accessors"])
+                i, k = len(gltf["materials"]), len(gltf["accessors"])
                 name = node[0] if not part else f"{node[0]}-{part}"
                 gltf["accessors"] += [
                     dict(bufferView=view(positions, 34962), componentType=5126, count=len(positions) // 3,
@@ -368,13 +373,36 @@ def export(path, folder, stage, area, progress):
                 gltf["materials"].append(dict(name=name, doubleSided=True, extensions={"KHR_materials_unlit": {}},
                                               pbrMetallicRoughness=dict(baseColorTexture=dict(index=i),
                                                                         metallicFactor=0, roughnessFactor=1)))
-                gltf["meshes"].append(dict(name=name, primitives=[dict(
-                    attributes=dict(POSITION=k, TEXCOORD_0=k + 1), indices=k + 2, material=i)]))
-                gltf["nodes"].append(dict(name=name, mesh=i))
-                gltf["scenes"][0]["nodes"].append(i)
+                if node[0][:block] != key or len(gltf["meshes"][-1]["primitives"]) == TILES_PER_MESH:
+                    key = node[0][:block]
+                    gltf["meshes"].append(dict(name=name, primitives=[]))
+                gltf["meshes"][-1]["primitives"].append(dict(
+                    attributes=dict(POSITION=k, TEXCOORD_0=k + 1), indices=k + 2, material=i))
             progress("Building mesh.glb", done, len(saved))
         if not gltf["meshes"]:
             return
+        gltf["nodes"] = [dict(name=mesh["name"], mesh=i) for i, mesh in enumerate(gltf["meshes"])]
+        gltf["scenes"][0]["nodes"] = list(range(len(gltf["meshes"])))
+
+        # Rest the lowest point on y = 0, so viewers orbit and zoom around the ground, not sea level.
+        positions = [accessor for accessor in gltf["accessors"] if accessor["type"] == "VEC3"]
+        base = min(accessor["min"][1] for accessor in positions)
+        for accessor in positions:
+            span = gltf["bufferViews"][accessor["bufferView"]]
+            spool.seek(span["byteOffset"])
+            values = array("f", spool.read(span["byteLength"]))
+            if sys.byteorder != "little":
+                values.byteswap()
+            values[1::3] = array("f", [y - base for y in values[1::3]])
+            accessor["min"][1], accessor["max"][1] = min(values[1::3]), max(values[1::3])
+            if sys.byteorder != "little":
+                values.byteswap()
+            spool.seek(span["byteOffset"])
+            spool.write(bytes(values))
+        spool.seek(0, 2)
+        gltf["asset"]["extras"] = dict(
+            latitude=lat, longitude=lon, base=base, radius=radius, bounds=list(area),
+            frame="meters east (x), up (y), and south (z) of the center; y = 0 is the lowest point, base meters above sea level")
         size = spool.tell()
         gltf["buffers"] = [dict(byteLength=size)]
         header = json.dumps(gltf, ensure_ascii=False, separators=(",", ":")).encode()

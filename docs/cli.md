@@ -89,7 +89,7 @@ Add `mesh` for Google Earth's textured 3D model of the area, saved as `mesh.glb`
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources mesh satellite -o captures
 ```
 
-`--mesh-level 1–22` sets the detail (default: `21`). Each level halves the texel size; `22` is the most detailed (about 4 cm per texel) and needs about four times as many downloads as `21`. Coordinates in `mesh.glb` are meters from the rectangle's center: x east, y up, z south.
+`--mesh-level 1–22` sets the detail (default: `21`). Each level halves the texel size; `22` is the most detailed (about 4 cm per texel) and needs about four times as many downloads as `21`. Coordinates in `mesh.glb` are meters from the rectangle's center: x east, y up, z south, with the lowest point at y = 0. The file is split into objects of up to 64 tiles, and each tile keeps its original texture.
 
 Resume a capture or start a saved plan using its printed run folder:
 

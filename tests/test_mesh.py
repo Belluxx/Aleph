@@ -7,7 +7,7 @@ import unittest
 from array import array
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from src import capture, mesh
 from src.common import MissingImagery, write_bytes
@@ -81,25 +81,36 @@ class MeshTests(unittest.TestCase):
         self.folder = Path(temporary.name)
 
     def test_export_drops_refined_octants_skirts_upper_layers_and_outside_triangles(self):
-        vertices = [(0, 0, 1), (2, 0, 0), (0, 2, 0), (2, 2, 0), (4, 0, 0), (4, 2, 0), (0, 4, 0), (60, 60, 0), (-60, -60, 0)]
+        # Five meters up; the export rests the lowest point on y = 0.
+        vertices = [(0, 0, 6), (2, 0, 5), (0, 2, 5), (2, 2, 5), (4, 0, 5), (4, 2, 5), (0, 4, 5), (60, 60, 5), (-60, -60, 5)]
         # Triangles: 0 kept, 1 skirt, 2–3 degenerate, 4 octant refined by "01", 5 octant of the
         # unavailable "02" (kept, odd so flipped), 6 centered outside, 7 in the fourth layer.
         strip = [0, 1, 2, 3, 3, 4, 5, 6, 7, 8]
         runs = [6, 1, 1, 0, 0, 0, 0, 0, 1] + [0] * 15 + [1]
         write_bytes(self.folder / "0.bin", node(vertices, strip, runs, skirts=bytes([0b10]), jpeg=b"jpeg-0"))
-        write_bytes(self.folder / "01.bin", node())
-        stage = dict(radius=RADIUS, nodes=[["0", 1, None, 0b110], ["01", 1, None, 0], ["02", 1, None, 0]],
-                     results=[dict(filename="0.bin"), dict(filename="01.bin"), dict(status="skipped")])
-        mesh.export(self.folder / "mesh.glb", self.folder, stage, AREA, Mock())
+        write_bytes(self.folder / "01.bin", node([(6, 6, 5), (8, 6, 5), (6, 8, 5)], [0, 1, 2], [3], jpeg=b"jpeg-01"))
+        write_bytes(self.folder / "03.bin", node([(6, -6, 5), (8, -6, 5), (6, -8, 5)], [0, 1, 2], [3], jpeg=b"jpeg-03"))
+        stage = dict(radius=RADIUS, level=3,
+                     nodes=[["0", 1, None, 0b110], ["01", 1, None, 0], ["02", 1, None, 0], ["03", 1, None, 0]],
+                     results=[dict(filename="0.bin"), dict(filename="01.bin"), dict(status="skipped"),
+                              dict(filename="03.bin")])
+        with patch.object(mesh, "TILES_PER_MESH", 2):
+            mesh.export(self.folder / "mesh.glb", self.folder, stage, AREA, Mock())
 
         gltf, view = read_glb(self.folder / "mesh.glb")
-        self.assertEqual([m["name"] for m in gltf["meshes"]], ["0"])
+        self.assertEqual(gltf["asset"]["extras"]["base"], 5)
+        # One block, split at the tile limit; each primitive has its own texture.
+        self.assertEqual([(m["name"], [p["material"] for p in m["primitives"]]) for m in gltf["meshes"]],
+                         [("0", [0, 1]), ("03", [2])])
         position, uv, indices = (gltf["accessors"][i]["bufferView"] for i in range(3))
         self.assertEqual(list(view(indices, "H")), [0, 1, 2, 3, 4, 5])
         # Vertices 0, 1, 2, 4, 6, 5 as x east, y up, z south.
         self.assertEqual(list(view(position, "f")), [0, 1, 0, 2, 0, 0, 0, 0, -2, 4, 0, 0, 0, 0, -4, 4, 0, -2])
         self.assertEqual(list(view(uv, "f"))[6:8], [40.5 / 256, 20.5 / 256])
         self.assertEqual(view(gltf["images"][0]["bufferView"], "B").tobytes(), b"jpeg-0")
+        self.assertEqual(list(view(gltf["accessors"][3]["bufferView"], "f")), [6, 0, -6, 8, 0, -6, 6, 0, -8])
+        self.assertEqual([view(gltf["images"][gltf["textures"][i]["source"]]["bufferView"], "B").tobytes()
+                          for i in (1, 2)], [b"jpeg-01", b"jpeg-03"])
 
     def test_parallel_download_keeps_node_order_across_interrupt_and_resume(self):
         nodes = [[f"0{i:02d}", 1, None, 0] for i in range(20)]

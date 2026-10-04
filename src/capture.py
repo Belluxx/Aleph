@@ -37,8 +37,8 @@ TERRAIN_NOTES = {
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
 MESH_NOTES = {
-    "mesh": "Google Earth 3D photogrammetry as glTF binary with Google's original JPEG textures and baked-in lighting. Coordinates are meters from the rectangle's center at sea level: x east, y up, z south. Heights are approximate.",
-    "selection": "Nodes are saved as downloaded in mesh/nodes/. Finer nodes replace their parent's octants; triangles are kept when their center is inside the rectangle. Levels stop where Google's data ends; level 22 is the most detailed.",
+    "mesh": "Google Earth 3D photogrammetry as glTF binary with Google's original JPEG textures and baked-in lighting. Coordinates are meters from the rectangle's center: x east, y up, z south. y = 0 is the lowest point; asset extras give its approximate height above sea level as base.",
+    "selection": "Nodes are saved as downloaded in mesh/nodes/. Finer nodes replace their parent's octants; triangles are kept when their center is inside the rectangle. Each glTF mesh holds up to 64 tiles from one octree block, with one material per original texture. Levels stop where Google's data ends; level 22 is the most detailed.",
 }
 
 README = b"""Aleph capture
@@ -54,7 +54,7 @@ satellite.png contains the same full-resolution pixels for easy viewing.
 Transparent pixels mark missing imagery or unfinished downloads.
 terrain.tif holds meters in EPSG:3857 (Int16 up to zoom 12, else Float32).
 Keep terrain/tiles/ for resume and offline export.
-mesh.glb is Google Earth's textured 3D mesh in meters around the center.
+mesh.glb is Google Earth's textured 3D mesh in meters, resting on y = 0.
 Keep mesh/nodes/ for resume and offline export.
 Filenames in the manifest and GeoJSON are relative to this run folder.
 See manifest.json for settings, sources, imagery dates, and coverage notes.
