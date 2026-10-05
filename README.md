@@ -7,6 +7,10 @@
   for you (<em>or your LLM</em>)
 </p>
 
+<p align="center">
+  <img src="resources/demo.webp" alt="The dashboard capturing the Colosseum, then 3D meshes of the Eiffel Tower, Sydney Opera House, and Matterhorn" width="800">
+</p>
+
 Aleph does two things:
 
 - Lets you draw a rectangle on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos, textured 3D models).
