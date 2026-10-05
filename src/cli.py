@@ -143,7 +143,7 @@ def _capture_command(commands):
     actions = captures.add_subparsers(dest="action", required=True)
     area = actions.add_parser("create", help="Plan and download an area with multiple sources")
     area.add_argument("--bbox", required=True, nargs=4, type=float, metavar=("S", "W", "N", "E"))
-    area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: streetview satellite osm; osm includes terrain)")
+    area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: streetview satellite osm terrain)")
 
     # Planning and confirmation.
     planning = area.add_mutually_exclusive_group()
@@ -192,7 +192,8 @@ def _capture_command(commands):
 
 
 def _dashboard_command(commands):
-    dashboard = commands.add_parser("dashboard", help="Open the local capture dashboard")
-    dashboard.add_argument("--root", type=Path, default=Path("."), help="capture directory (default: current directory)")
-    dashboard.add_argument("--port", type=int, metavar="PORT", default=8100, help="local port (default: 8100)")
-    dashboard.add_argument("--no-browser", action="store_true", help="print the URL without opening a browser")
+    dashboard = commands.add_parser("dashboard", help="Draw, capture, and explore areas in the browser")
+    dashboard.add_argument("-o", "--output", type=Path, default=Path("."), help="folder holding captures (default: current directory)")
+    dashboard.add_argument("--port", type=int, default=8100, help="local port (default: %(default)s)")
+    dashboard.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
+    _cache_options(dashboard)

@@ -1,7 +1,6 @@
 """Find places, request imagery, and manage area captures."""
 
 import json
-import math
 import os
 import shutil
 import sys
@@ -11,7 +10,7 @@ from pathlib import Path
 from src import capture, places, quick
 from src.cli import parser
 from src.common import CachedClient, Client, Progress, RequestError, now
-from src.geo import MERCATOR_RADIUS, bounds
+from src.geo import bounds
 
 
 def style(text, code="1"):
@@ -32,8 +31,7 @@ def describe(run):
         elif mode == "satellite":
             label = "Satellite"
             g = stage["grid"]
-            latitude = math.radians((run["bounds"][0] + run["bounds"][2]) / 2)
-            scale = 2 * math.pi * MERCATOR_RADIUS * math.cos(latitude) / (256 * 2 ** g["zoom"])
+            scale = capture.resolution(run["bounds"], g["zoom"])
             message = f"{estimate['satellite_tiles']:,} tiles, {g['width']:,} × {g['height']:,} px at about {scale:.2f} m/px"
         elif mode == "osm":
             label = "OSM map"
@@ -136,9 +134,9 @@ def place_rows(items, stream, *, locations=False):
         kind = ", ".join(category.split(":", 1)[-1].replace("_", " ") for category in categories)
         description = name + (f" ({kind})" if kind else "")
         if locations:
-            description += f" · {item['lat']:.5f}, {item['lon']:.5f}"
+            description += f" at {item['lat']:.5f}, {item['lon']:.5f}"
             if "distance_m" in item:
-                description += f" · {item['distance_m']:.0f} m away"
+                description += f" ({item['distance_m']:.0f} m away)"
         values.append((item["id"], description))
     rows(("ID", "PLACE"), values, stream)
 
@@ -160,12 +158,12 @@ def emit(result, as_json):
         if place := result.get("place"):
             print(f"Selected: {place['label']} ({place['id']})")
         if result["command"] == "satellite":
-            print(f"Saved satellite image · {result['width']} × {result['height']} px")
+            print(f"Saved satellite image ({result['width']} × {result['height']} px)")
             print(result["path"])
         elif result["command"] == "streetview":
             count = len(result["photos"])
             print(f"Saved {count} {'photo' if count == 1 else 'photos'}"
-                  f" · {result['saved_stops']}/{result['requested_stops']} stops")
+                  f" ({result['saved_stops']}/{result['requested_stops']} stops)")
             print(result["photos"][0]["path"] if count == 1 else result["folder"])
             if result["status"] == "partial":
                 print(f"Missing stops: see {Path(result['folder']) / 'result.json'}", file=sys.stderr)
@@ -190,10 +188,10 @@ def main(argv=None):
             return 0
         args = command.parse_args(argv)
         if args.command == "dashboard":
-            from src.dashboard import serve
+            from src import dashboard
 
-            serve(args.root, args.port, open_browser=not args.no_browser)
-            return 0
+            return dashboard.serve(args.output, args.port, cache_dir=args.cache_dir, refresh=args.refresh,
+                                   open_browser=not args.no_browser)
         if args.command != "capture":
             with Progress() as progress:
                 result = query(args, progress)

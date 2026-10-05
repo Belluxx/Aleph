@@ -1,0 +1,1366 @@
+"use strict";
+
+const BASEMAP = "https://tiles.openfreemap.org/styles/positron";
+const EMPTY = {type: "FeatureCollection", features: []};
+const NAMES = {streetview: "Street View", satellite: "Satellite", osm: "OSM map", terrain: "Terrain", mesh: "3D mesh"};
+const STATES = {planned: "Planned", running: "Capturing", interrupted: "Interrupted", stopped: "Stopped",
+                failed: "Failed", complete: "Complete", unreadable: "Unreadable"};
+const NUMBERS = ["step", "fov", "sphere_zoom", "satellite_zoom", "terrain_zoom", "mesh_level", "delay",
+                 "streetview_workers", "satellite_workers", "terrain_workers", "mesh_workers"];
+const EARTH = 6371008.8;
+const numberFormat = new Intl.NumberFormat("en-US", {notation: "compact", maximumFractionDigits: 0});
+const number = value => numberFormat.format(Math.round(value));
+
+// Level names shown under slider knobs.
+const SCALES = {
+  satellite_zoom: {12: "City", 13: "Town", 14: "District", 15: "Blocks", 16: "Buildings", 17: "Roofs", 18: "Cars",
+                   19: "Road markings", 20: "Details", 21: "Finest"},
+  terrain_zoom: {8: "Region", 9: "Province", 10: "Metro area", 11: "City", 12: "Town", 13: "District", 14: "Blocks"},
+  mesh_level: {14: "Hills", 15: "Districts", 16: "Blocks", 17: "Buildings", 18: "Roofs", 19: "Windows", 20: "Cars",
+               21: "Details", 22: "Finest"},
+  sphere_zoom: Object.fromEntries(["Thumbnail", "Low", "Medium", "High", "Very high", "Maximum"]
+    .map((name, z) => [z, `${name} (${number(512 * 2 ** z)} px)`])),
+};
+// Sliders whose positions pick from a list of values.
+const WORKERS = [4, 8, 16, 32, 64];
+const CHOICES = {streetview_workers: WORKERS, satellite_workers: WORKERS, terrain_workers: WORKERS, mesh_workers: WORKERS};
+for (const name in CHOICES) SCALES[name] = {4: "Gentle", 8: "Balanced", 16: "Fast", 32: "Aggressive", 64: "Maximum"};
+// Planning times are shown coarsely, since the estimate is rough, rounded to the nearest unit at half of it.
+// Hours or more ask before planning.
+const SPEEDS = [{limit: 30, name: "seconds", icon: "bolt"}, {limit: 1800, name: "minutes", icon: "clock"},
+                {limit: 12 * 3600, name: "hours", icon: "turtle"},
+                {limit: 3.5 * 86400, name: "days", icon: "warning", alert: true},
+                {limit: 15 * 86400, name: "weeks", icon: "error", alert: true},
+                {limit: Infinity, name: "months", icon: "error", alert: true}];
+const SLOW_PLAN = SPEEDS[1].limit;
+const SLOW_CAPTURE = SPEEDS[2].limit;  // Captures are expected to take a while; days or more ask before starting.
+// Settings that shorten a slow capture, by source.
+const SHORTER = {streetview: "wider Street View spacing", satellite: "a lower satellite zoom", terrain: "a lower terrain zoom",
+                 mesh: "lower 3D mesh detail"};
+// Progress phases that a capture stage row already shows.
+const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tiles", "3D mesh"]);
+const LARGE_MESH = 250e6;  // Bytes of mesh.glb that ask first: its textures can need several GB of graphics memory.
+const PITCH = 60;  // Degrees the map tilts to for 3D layers.
+
+// Helpers
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const esc = value => String(value ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const plural = (count, one, many = `${one}s`) => `${number(count)} ${count === 1 ? one : many}`;
+const icon = name => state.icons[name].replace("<svg ", '<svg class="icon" aria-hidden="true" ');
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const absolute = path => location.origin + path;
+const capturePath = (id, path = "") => `/api/captures/${encodeURIComponent(id)}${path}`;
+
+const store = {
+  get(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(`aleph:${key}`)) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(`aleph:${key}`, JSON.stringify(value)); } catch { /* Private windows may refuse. */ }
+  },
+};
+
+async function api(path, body) {
+  const response = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || `${response.status} ${response.statusText}`);
+  return data;
+}
+
+function duration(seconds) {
+  seconds = Math.max(1, Math.round(seconds));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes >= 1440) {
+    const days = numberFormat.format(minutes / 1440);
+    return `${days} ${days === "1" ? "day" : "days"}`;
+  }
+  const hours = Math.floor(minutes / 60), remainder = minutes % 60;
+  return `${hours} h${remainder ? ` ${remainder} min` : ""}`;
+}
+
+const meters = m => m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m)} m`;
+const resolution = m => `${m < 1 ? m.toFixed(2) : m.toFixed(1)} m/px`;
+function megapixels(width, height) {
+  const total = width * height / 1e6;
+  return `${total < 1 ? total.toLocaleString("en-US", {maximumSignificantDigits: 2}) : number(total)} MP`;
+}
+const speed = seconds => SPEEDS.find(s => seconds < s.limit);
+const megabytes = bytes => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB`
+  : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+
+function distance([lat1, lon1], [lat2, lon2]) {
+  const r = Math.PI / 180;
+  const a = Math.sin((lat2 - lat1) * r / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin((lon2 - lon1) * r / 2) ** 2;
+  return 2 * EARTH * Math.asin(Math.sqrt(a));
+}
+
+function size([s, w, n, e]) {
+  const middle = (s + n) / 2;
+  return [distance([middle, w], [middle, e]), distance([s, w], [n, w])];
+}
+
+const dimensions = area => size(area).map(meters).join(" × ");
+const ring = ([s, w, n, e]) => [[w, s], [e, s], [e, n], [w, n], [w, s]];
+const polygon = (area, properties = {}) => ({type: "Feature", properties, geometry: {type: "Polygon", coordinates: [ring(area)]}});
+const point = (coordinates, properties = {}) => ({type: "Feature", properties, geometry: {type: "Point", coordinates}});
+const collection = features => ({type: "FeatureCollection", features});
+const lngLatBounds = ([s, w, n, e]) => [[w, s], [e, n]];
+
+function when(iso) {
+  const date = new Date(iso);
+  return `${date.toLocaleDateString(undefined, {day: "numeric", month: "short", year: "numeric"})}, ${
+    date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit"})}`;
+}
+
+function destination([lon, lat], heading, length) {
+  const r = Math.PI / 180, d = length / EARTH, h = heading * r, phi = lat * r;
+  const phi2 = Math.asin(Math.sin(phi) * Math.cos(d) + Math.cos(phi) * Math.sin(d) * Math.cos(h));
+  const lambda = lon * r + Math.atan2(Math.sin(h) * Math.sin(d) * Math.cos(phi), Math.cos(d) - Math.sin(phi) * Math.sin(phi2));
+  return [lambda / r, phi2 / r];
+}
+
+// State
+
+const state = {
+  config: null,
+  icons: null,  // SVG markup of icons/*.svg, by file name.
+  captures: [],
+  job: null,
+  view: null,
+  area: null,
+  drawing: false,
+  drag: null,
+  preview: null,
+  planError: null,
+  watched: null,  // Id of the job whose end this page still has to handle.
+  captureId: null,
+  capture: null,
+  photos: [],
+  photoCount: 0,
+  photoLoading: false,
+  photoAgain: false,
+  live: {},
+  selected: null,
+  search: [],
+  toggles: {photos: true, route: true, satellite: true, terrain: true, buildings: true, roads: true, water: true,
+            outline: true, basemap: true, ...store.get("toggles", {})},
+  solid: null,  // 3D layer shown in a capture: "mesh", "relief", or null.
+  meshLoading: false,
+};
+
+let map;
+let navigation;
+let basemapLayers = [];
+// Raster source and layer ids per mode, oldest first; a refresh loads on top until it replaces the older one.
+const rasters = {satellite: [], terrain: []};
+let rasterCount = 0;
+const themed = new Map();  // Layer id → paint with CSS variable names, resolved per color scheme.
+
+// Map styling
+
+// Replace "--name" strings, including inside expressions, with the current CSS value.
+const resolve = paint => JSON.parse(JSON.stringify(paint), (key, value) =>
+  typeof value === "string" && value.startsWith("--") ? css(value) : value);
+
+function tint(layer) {
+  const source = layer["source-layer"] || "";
+  if (layer.type === "background") return {"background-color": "--paper"};
+  if (layer.type === "fill") {
+    if (source === "water") return {"fill-color": "--map-water"};
+    if (source === "building") return {"fill-color": "--map-building", "fill-outline-color": "--map-building-line"};
+    return {"fill-color": "--map-land"};
+  }
+  if (layer.type === "line") {
+    if (source === "waterway") return {"line-color": "--map-water"};
+    if (source === "boundary") return {"line-color": "--map-boundary"};
+    if (layer.id.includes("rail")) return {"line-color": "--map-rail"};
+    return {"line-color": layer.id.includes("casing") ? "--map-casing" : "--map-road"};
+  }
+  if (layer.type === "symbol") return {"text-color": "--map-label", "text-halo-color": "--paper"};
+  return {};
+}
+
+async function basemap() {
+  try {
+    const style = await (await fetch(BASEMAP)).json();
+    // Place names share layers with dot icons; preserve their text when removing icons.
+    style.layers = style.layers.filter(layer => layer.type !== "symbol" || !layer.layout?.["icon-image"]
+      || layer["source-layer"] === "place");
+    for (const layer of style.layers) {
+      if (layer.type === "symbol" && layer["source-layer"] === "place") {
+        for (const properties of [layer.layout, layer.paint]) {
+          for (const key of Object.keys(properties || {})) if (key.startsWith("icon-")) delete properties[key];
+        }
+      }
+      themed.set(layer.id, tint(layer));
+      layer.paint = {...layer.paint, ...resolve(tint(layer))};
+    }
+    basemapLayers = style.layers.map(layer => layer.id);
+    return style;
+  } catch {
+    // Offline: saved captures still display on plain paper.
+    themed.set("background", {"background-color": "--paper"});
+    basemapLayers = ["background"];
+    return {version: 8, sources: {}, layers: [{id: "background", type: "background", paint: resolve({"background-color": "--paper"})}]};
+  }
+}
+
+const is = (key, value) => ["==", ["get", key], value];
+const hover = (on, off) => ["case", ["boolean", ["feature-state", "hover"], false], on, off];
+const grow = (low, high) => ["interpolate", ["linear"], ["zoom"], 14, low, 19, high];
+
+const OVERLAYS = [
+  {id: "osm-land", source: "osm", type: "fill", filter: is("kind", "land"), paint: {"fill-color": "--ink", "fill-opacity": 0.05}},
+  {id: "osm-water", source: "osm", type: "fill", filter: is("kind", "water"), paint: {"fill-color": "--ink", "fill-opacity": 0.14}},
+  {id: "osm-waterways", source: "osm", type: "line", filter: is("kind", "waterway"),
+   paint: {"line-color": "--ink", "line-opacity": 0.4, "line-width": 1}},
+  {id: "osm-buildings", source: "osm", type: "fill", filter: is("kind", "building"), paint: {"fill-color": "--ink", "fill-opacity": 0.14}},
+  {id: "osm-building-lines", source: "osm", type: "line", filter: is("kind", "building"),
+   paint: {"line-color": "--ink", "line-opacity": 0.7, "line-width": 0.75}},
+  {id: "osm-paths", source: "osm", type: "line", filter: ["all", is("kind", "road"), is("road", "path")],
+   paint: {"line-color": "--ink", "line-opacity": 0.6, "line-width": 1, "line-dasharray": [2, 1.5]}},
+  {id: "osm-roads", source: "osm", type: "line", filter: ["all", is("kind", "road"), ["!=", ["get", "road"], "path"]],
+   layout: {"line-cap": "round", "line-join": "round"},
+   paint: {"line-color": "--ink", "line-opacity": 0.75, "line-width": ["interpolate", ["linear"], ["zoom"],
+     13, ["match", ["get", "road"], "major", 1.2, 0.6], 18, ["match", ["get", "road"], "major", 4, 2]]}},
+  {id: "bounds", source: "bounds", type: "line", paint: {"line-color": "--ink", "line-width": 1, "line-dasharray": [4, 3]}},
+  {id: "plan-grid", source: "plan", type: "line", filter: is("kind", "satellite"),
+   paint: {"line-color": "--ink", "line-opacity": 0.3, "line-width": 0.5}},
+  {id: "plan-terrain", source: "plan", type: "line", filter: is("kind", "terrain"),
+   paint: {"line-color": "--muted", "line-width": 1, "line-dasharray": [2, 2]}},
+  {id: "plan-paths", source: "plan", type: "line", filter: is("kind", "path"), layout: {"line-cap": "round", "line-join": "round"},
+   paint: {"line-color": "--muted", "line-opacity": 0.6, "line-width": 2}},
+  {id: "route-paths", source: "plan", type: "line", filter: is("kind", "path"), layout: {"line-cap": "round", "line-join": "round"},
+   paint: {"line-color": "--muted", "line-opacity": 0.35, "line-width": 1.5}},
+  {id: "plan-gaps", source: "plan", type: "line", filter: is("kind", "gap"),
+   paint: {"line-color": "--accent", "line-width": 2, "line-dasharray": [1, 1.5]}},
+  {id: "plan-stops", source: "plan", type: "circle", filter: is("kind", "stop"),
+   paint: {"circle-radius": grow(1.5, 4), "circle-color": "--accent"}},
+  {id: "route-stops", source: "plan", type: "circle", filter: is("kind", "stop"),
+   paint: {"circle-radius": grow(1.5, 4.5), "circle-color": "--paper", "circle-stroke-color": "--muted", "circle-stroke-width": 1}},
+  {id: "photos", source: "photos", type: "circle",
+   paint: {"circle-radius": grow(2, 5.5), "circle-color": "--ink", "circle-stroke-color": "--paper", "circle-stroke-width": 1.5}},
+  {id: "selected-view", source: "selected", type: "line", filter: ["==", ["geometry-type"], "LineString"],
+   layout: {"line-cap": "round"}, paint: {"line-color": "--accent", "line-width": 2.5}},
+  {id: "selected", source: "selected", type: "circle", filter: ["==", ["geometry-type"], "Point"],
+   paint: {"circle-radius": 6, "circle-color": "--accent", "circle-stroke-color": "--paper", "circle-stroke-width": 2}},
+  {id: "outlines-fill", source: "outlines", type: "fill", paint: {"fill-color": "--accent", "fill-opacity": hover(0.08, 0)}},
+  {id: "outlines", source: "outlines", type: "line", paint: {"line-color": hover("--accent", "--ink"), "line-width": hover(2, 1)}},
+  {id: "area-fill", source: "area", type: "fill", paint: {"fill-color": "--accent", "fill-opacity": 0.07}},
+  {id: "area-line", source: "area", type: "line", paint: {"line-color": "--accent", "line-width": 1.5}},
+  {id: "corners", source: "corners", type: "symbol",
+   layout: {"icon-image": "corner", "icon-allow-overlap": true, "icon-ignore-placement": true}},
+];
+
+// Result layers each toggle shows.
+const GROUPS = {
+  photos: ["photos", "selected", "selected-view"],
+  route: ["route-paths", "route-stops"],
+  satellite: ["satellite"],
+  terrain: ["terrain"],
+  buildings: ["osm-buildings", "osm-building-lines"],
+  roads: ["osm-roads", "osm-paths"],
+  water: ["osm-land", "osm-water", "osm-waterways"],
+  outline: ["bounds"],
+};
+
+function addLayer(layer, before) {
+  themed.set(layer.id, layer.paint || {});
+  map.addLayer({...layer, paint: resolve(layer.paint || {})}, before);
+}
+
+function cornerImage() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 20;
+  const context = canvas.getContext("2d");
+  context.fillStyle = css("--accent");
+  context.fillRect(0, 0, 20, 20);
+  context.fillStyle = css("--paper");
+  context.fillRect(3, 3, 14, 14);
+  return context.getImageData(0, 0, 20, 20);
+}
+
+function applyTheme() {
+  for (const [id, paint] of themed) {
+    if (!map.getLayer(id)) continue;
+    for (const [key, value] of Object.entries(resolve(paint))) map.setPaintProperty(id, key, value);
+  }
+  map.updateImage("corner", cornerImage());
+}
+
+function visibleLayers() {
+  const on = new Set();
+  const add = (...ids) => ids.forEach(id => on.add(id));
+  if (state.view === "library") add("outlines", "outlines-fill");
+  if (state.view === "new" || state.view === "preview") add("area-fill", "area-line");
+  if (state.view === "new" && state.area && !state.drawing) add("corners");
+  if (state.view === "preview" && state.preview) add("plan-grid", "plan-terrain", "plan-paths", "plan-gaps", "plan-stops");
+  if (state.view === "capture") {
+    for (const [group, ids] of Object.entries(GROUPS)) if (state.toggles[group]) add(...ids);
+  }
+  return on;
+}
+
+function syncMap() {
+  if (!map?.getLayer("corners")) return;
+  const on = visibleLayers();
+  for (const layer of OVERLAYS) map.setLayoutProperty(layer.id, "visibility", on.has(layer.id) ? "visible" : "none");
+  for (const [mode, ids] of Object.entries(rasters)) {
+    for (const id of ids) map.setLayoutProperty(id, "visibility", on.has(mode) ? "visible" : "none");
+  }
+  const base = state.view !== "capture" || state.toggles.basemap;
+  for (const id of basemapLayers) {
+    if (id !== "background" && map.getLayer(id)) map.setLayoutProperty(id, "visibility", base ? "visible" : "none");
+  }
+}
+
+function setData(source, data) {
+  map.getSource(source)?.setData(data);
+}
+
+// Rasters are added once a capture has saved tiles; their URLs carry the saved count.
+// Each refresh gets its own source: reloading tiles in place blanks areas that were still missing.
+function setRaster(mode, info) {
+  const ids = rasters[mode];
+  if (ids.length > 1) removeRaster(ids.pop());  // A refresh still loading is superseded.
+  const id = `raster-${mode}-${++rasterCount}`;
+  const path = mode === "terrain" ? "hillshade" : mode;
+  const [s, w, n, e] = state.capture.bounds;
+  // The server shades terrain itself, so hillshade tiles stay transparent where heights are missing.
+  map.addSource(id, {type: "raster", tileSize: mode === "satellite" ? 256 : 512, bounds: [w, s, e, n],
+                     minzoom: info.minzoom, maxzoom: info.zoom,
+                     tiles: [absolute(capturePath(state.capture.id, `/${path}/{z}/{x}/{y}?v=${info.done}`))]});
+  // Hillshade stays above the imagery.
+  addLayer({id, type: "raster", source: id, paint: {"raster-fade-duration": 0}},
+           mode === "satellite" && rasters.terrain[0] || "osm-land");
+  ids.push(id);
+  syncMap();
+}
+
+function removeRaster(id) {
+  map.removeLayer(id);
+  map.removeSource(id);
+  themed.delete(id);
+}
+
+// Drop older rasters once the newest has loaded every tile in view.
+function swapRasters(event) {
+  for (const ids of Object.values(rasters)) {
+    const newest = ids.at(-1);
+    if (ids.length < 2 || (event.type === "sourcedata" && event.sourceId !== newest) || !map.isSourceLoaded(newest)) continue;
+    ids.splice(0, ids.length - 1).forEach(removeRaster);
+  }
+}
+
+function clearCaptureLayers() {
+  for (const ids of Object.values(rasters)) ids.splice(0).forEach(removeRaster);
+  for (const source of ["osm", "photos", "selected", "bounds", "plan"]) setData(source, EMPTY);
+  Object.assign(state, {photos: [], photoCount: 0, photoAgain: false, live: {}, selected: null});
+  if (state.solid) {
+    state.solid = null;
+    syncSolid();
+    map.jumpTo({pitch: 0, bearing: 0});  // The next view fits its bounds, which would keep a half-eased tilt.
+  }
+  if (map.getSource("dem")) map.removeSource("dem");
+  $("#viewer").hidden = true;
+}
+
+// 3D
+
+let three = null;  // three.js and its glTF loader, imported on first use.
+
+function loadThree() {
+  three ??= Promise.all([import("three"), import("three/addons/loaders/GLTFLoader.js")]).catch(error => {
+    three = null;  // Try again next time, such as once back online.
+    throw error;
+  });
+  return three;
+}
+
+// Firefox fails to decode many textures when thousands start at once, which leaves them white; a few at a time all load.
+function throttle(loader, limit = 8) {
+  const load = loader.load.bind(loader), waiting = [];
+  let active = 0;
+  const next = () => {
+    if (active >= limit || !waiting.length) return;
+    active++;
+    const [url, onLoad, onProgress, onError] = waiting.shift();
+    const settle = callback => value => {
+      active--;
+      next();
+      callback?.(value);
+    };
+    load(url, settle(onLoad), onProgress, settle(onError));
+  };
+  loader.load = (...args) => {
+    waiting.push(args);
+    next();
+  };
+}
+
+// A custom layer drawing mesh.glb, in meters east (x), up (y) and south (z) of the capture's center.
+async function meshLayer(capture) {
+  const [THREE, {GLTFLoader}] = await loadThree();
+  const loader = new GLTFLoader().register(parser => {
+    throttle(parser.textureLoader);
+    return {name: "throttle"};
+  });
+  const {scene} = await loader.loadAsync(absolute(capturePath(capture.id, "/files/mesh.glb")));
+  // Rest the ground along its edges on the flat map, where they meet: the lowest point at y = 0 can be a pit,
+  // such as an arena floor or an underpass. A low share of edge heights skips roofs cut by the edges.
+  const box = new THREE.Box3().setFromObject(scene), edges = [];
+  scene.traverse(({geometry}) => {
+    const position = geometry?.attributes.position;
+    for (let i = 0; i < (position?.count ?? 0); i++) {
+      const x = position.getX(i), z = position.getZ(i);
+      if (Math.min(x - box.min.x, box.max.x - x, z - box.min.z, box.max.z - z) < 10) edges.push(position.getY(i));
+    }
+  });
+  edges.sort((a, b) => a - b);
+  const ground = edges[Math.floor(edges.length / 10)] ?? 0;
+  const [s, w, n, e] = capture.bounds;
+  const origin = maplibregl.MercatorCoordinate.fromLngLat([(w + e) / 2, (s + n) / 2], -ground);
+  const scale = origin.meterInMercatorCoordinateUnits();
+  // Mercator runs x east, y south and z up: turn y-up into z-up, then mirror y so glTF's south stays south.
+  const place = new THREE.Matrix4().makeTranslation(origin.x, origin.y, origin.z)
+    .scale(new THREE.Vector3(scale, -scale, scale)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+  const camera = new THREE.Camera();
+  let renderer;
+  return {
+    id: "mesh", type: "custom", renderingMode: "3d",
+    onAdd(map, gl) {
+      renderer = new THREE.WebGLRenderer({canvas: map.getCanvas(), context: gl});
+      renderer.autoClear = false;  // Draw over the map.
+    },
+    render(gl, {defaultProjectionData}) {
+      camera.projectionMatrix.fromArray(defaultProjectionData.mainMatrix).multiply(place);
+      renderer.resetState();
+      renderer.render(scene, camera);
+    },
+    onRemove() {
+      scene.traverse(object => {
+        object.geometry?.dispose();
+        object.material?.map?.dispose();
+        object.material?.dispose();
+      });
+      renderer.dispose();
+    },
+  };
+}
+
+// 3D layers tilt the map and let it rotate; otherwise it stays flat and north up.
+function tilt(on) {
+  if (on === map.dragRotate.isEnabled()) return;
+  for (const handler of [map.dragRotate, map.touchPitch]) on ? handler.enable() : handler.disable();
+  for (const handler of [map.touchZoomRotate, map.keyboard]) on ? handler.enableRotation() : handler.disableRotation();
+  on ? map.boxZoom.disable() : map.boxZoom.enable();  // Shift + drag orbits instead.
+  map.removeControl(navigation);
+  navigation = new maplibregl.NavigationControl({showCompass: on});  // Its click turns north and keeps the tilt.
+  map.addControl(navigation, "top-right");
+  hint(on ? "Shift + drag to rotate and tilt" : "");
+  // Easing at once would stop a move in progress, such as the fit to a capture just opened, halfway.
+  const ease = () => map.easeTo(on ? {pitch: PITCH} : {pitch: 0, bearing: 0});
+  map.isMoving() ? map.once("moveend", ease) : ease();
+}
+
+// Shift + drag rotates and tilts as in Google Earth, at the speeds of MapLibre's right-drag.
+function startOrbit(event) {
+  const {shiftKey, button, clientX, clientY} = event.originalEvent;
+  if (!shiftKey || button !== 0 || !map.dragRotate.isEnabled()) return;
+  event.preventDefault();  // Keeps the map from panning.
+  let last = [clientX, clientY];
+  const move = ({clientX: x, clientY: y}) => {
+    map.jumpTo({bearing: map.getBearing() + (x - last[0]) * 0.8, pitch: map.getPitch() - (y - last[1]) * 0.5});
+    last = [x, y];
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", () => window.removeEventListener("mousemove", move), {once: true});
+}
+
+async function setSolid(kind, on) {
+  const bytes = state.capture.files["mesh.glb"];
+  if (on && kind === "mesh" && bytes > LARGE_MESH && !await confirmMesh(bytes)) return renderLayers();
+  state.solid = on ? kind : null;
+  renderLayers();
+  syncSolid();
+}
+
+// Show the mesh or the terrain relief, one at a time since the mesh has its own ground.
+async function syncSolid() {
+  const {solid, capture} = state;
+  if (solid !== "relief" && map.getTerrain()) map.setTerrain(null);
+  if (solid !== "mesh" && map.getLayer("mesh")) map.removeLayer("mesh");
+  tilt(!!solid);
+  if (solid === "relief") {
+    const [s, w, n, e] = capture.bounds, {minzoom, zoom} = capture.stages.terrain;
+    if (!map.getSource("dem")) {
+      map.addSource("dem", {type: "raster-dem", encoding: "terrarium", tileSize: 512, bounds: [w, s, e, n], minzoom,
+                            maxzoom: zoom, tiles: [absolute(capturePath(capture.id, "/dem/{z}/{x}/{y}"))]});
+    }
+    map.setTerrain({source: "dem"});
+  }
+  if (solid !== "mesh" || map.getLayer("mesh")) return;
+  state.meshLoading = true;
+  renderLayers();
+  const current = () => state.capture?.id === capture.id && state.solid === "mesh";
+  try {
+    const layer = await meshLayer(capture);
+    if (current() && !map.getLayer("mesh")) map.addLayer(layer);
+  } catch (error) {
+    if (current()) {
+      state.solid = null;
+      syncSolid();
+      $("#capture-error").textContent = `Could not show the 3D mesh: ${error.message}`;
+      $("#capture-error").hidden = false;
+    }
+  } finally {
+    state.meshLoading = false;
+    renderLayers();
+  }
+}
+
+// Area drawing
+
+function setArea(area) {
+  state.area = area;
+  setData("area", area ? collection([polygon(area)]) : EMPTY);
+  setData("corners", area ? collection(ring(area).slice(0, 4).map(c => point(c))) : EMPTY);
+  renderArea();
+}
+
+function areaFrom(a, b) {
+  const clampLat = value => Math.max(-85.05, Math.min(85.05, value));
+  const clampLon = value => Math.max(-180, Math.min(180, value));
+  return [clampLat(Math.min(a.lat, b.lat)), clampLon(Math.min(a.lng, b.lng)),
+          clampLat(Math.max(a.lat, b.lat)), clampLon(Math.max(a.lng, b.lng))];
+}
+
+function cornerAt(pixel) {
+  if (!state.area) return null;
+  const corners = ring(state.area).slice(0, 4);
+  const index = corners.findIndex(corner => {
+    const p = map.project(corner);
+    return Math.abs(p.x - pixel.x) <= 9 && Math.abs(p.y - pixel.y) <= 9;
+  });
+  if (index < 0) return null;
+  const [lng, lat] = corners[(index + 2) % 4];
+  return {index, anchor: {lng, lat}};
+}
+
+function hint(text) {
+  $("#hint").textContent = text;
+  $("#hint").hidden = !text;
+}
+
+function setDrawing(on) {
+  state.drawing = on;
+  hint(on ? "Drag to draw the capture area, or press Esc to pan instead" : "");
+  map.getCanvas().style.cursor = on ? "crosshair" : "";
+  renderArea();
+  syncMap();
+}
+
+function startDrag(event) {
+  if (state.view !== "new" || event.originalEvent.button !== 0) return;
+  const corner = state.drawing ? null : cornerAt(event.point);
+  if (!state.drawing && !corner) return;
+  event.preventDefault();  // Keeps the map from panning.
+  state.drag = {anchor: corner ? corner.anchor : event.lngLat, previous: state.area};
+}
+
+function moveDrag(event) {
+  if (state.drag) return setArea(areaFrom(state.drag.anchor, event.lngLat));
+  if (state.view === "new" && !state.drawing) {
+    const corner = cornerAt(event.point);
+    map.getCanvas().style.cursor = corner ? (corner.index % 2 ? "nwse-resize" : "nesw-resize") : "";
+  }
+}
+
+function endDrag() {
+  if (!state.drag) return;
+  const {previous} = state.drag;
+  state.drag = null;
+  const [width, height] = state.area ? size(state.area) : [0, 0];
+  if (width < 5 || height < 5) {
+    setArea(previous);  // A click, not a drag.
+    return;
+  }
+  setDrawing(false);
+  estimate();
+}
+
+// Settings
+
+function fillForm(options) {
+  for (const input of $("#settings").elements) {
+    const name = input.name;
+    if (!name) continue;
+    if (name === "include") input.checked = options.include.includes(input.value);
+    else if (name === "camera") input.checked = (input.value === "sphere") === options.full_sphere;
+    else if (input.type === "radio") input.checked = String(options[name]) === input.value;
+    else if (name in CHOICES) input.value = CHOICES[name].findLastIndex(value => value <= options[name]);
+    else if (name in options) input.value = options[name];
+  }
+  updateForm();
+}
+
+function readForm() {
+  const data = new FormData($("#settings"));
+  const options = {include: data.getAll("include"), full_sphere: data.get("camera") === "sphere", depth: data.get("depth"),
+                   streetview_format: data.get("streetview_format"), satellite_format: data.get("satellite_format")};
+  for (const name of NUMBERS) options[name] = name in CHOICES ? CHOICES[name][data.get(name)] : Number(data.get(name));
+  return options;
+}
+
+function updateForm() {
+  const options = readForm();
+  for (const fieldset of $$(".source")) fieldset.classList.toggle("on", options.include.includes(fieldset.dataset.source));
+  for (const field of $$("[data-camera]")) field.hidden = (field.dataset.camera === "sphere") !== options.full_sphere;
+  for (const input of $$(".range input")) {
+    const range = input.parentElement, min = Number(input.min), max = Number(input.max);
+    range.style.setProperty("--at", (input.value - min) / (max - min));
+    range.style.setProperty("--steps", max - min);
+    const value = CHOICES[input.name]?.[input.value] ?? input.value;
+    $(".knob", range).textContent = value;
+    $(".tag", range).textContent = SCALES[input.name][value];
+    placeTag(range);
+  }
+  renderPreviewButton();
+  store.set("options", options);
+}
+
+// Center the level name under the thumb, kept inside the slider.
+function placeTag(range) {
+  const input = $("input", range), tag = $(".tag", range), width = range.clientWidth;
+  const center = (input.value - input.min) / (input.max - input.min) * (width - 24) + 12;
+  tag.style.left = `${Math.max(0, Math.min(width - tag.offsetWidth, center - tag.offsetWidth / 2))}px`;
+}
+
+function renderPreviewButton() {
+  const button = $("#preview-button"), sources = readForm().include.length;
+  button.disabled = !state.area || !sources;
+  button.textContent = !sources ? "Select one or more sources first" : !state.area ? "Draw an area first" : "Preview";
+}
+
+let estimateTimer = null;
+let estimateCount = 0;
+
+// Imagery sizes and download times, and how long Street View and 3D mesh take to plan.
+async function fetchEstimate() {
+  const {include, satellite_zoom, terrain_zoom, mesh_level, streetview_workers, satellite_workers, terrain_workers,
+         mesh_workers, delay} = readForm();
+  if (!state.area || include.every(mode => mode === "osm")) return {};
+  try {
+    return await api("/api/estimate", {bounds: state.area, options: {include, satellite_zoom, terrain_zoom, mesh_level,
+      streetview_workers, satellite_workers, terrain_workers, mesh_workers, delay}});
+  } catch {
+    return {};  // Invalid values are reported by Preview.
+  }
+}
+
+function estimate() {
+  clearTimeout(estimateTimer);
+  estimateTimer = setTimeout(async () => {
+    const count = ++estimateCount;
+    const outputs = {satellite: $("[data-source=satellite] .estimate"), terrain: $("[data-source=terrain] .estimate")};
+    const details = {satellite: $("[data-detail=satellite]"), terrain: $("[data-detail=terrain]")};
+    const result = await fetchEstimate();
+    if (count !== estimateCount) return;
+    const {satellite, terrain, planning = {}} = result;
+    for (const mode of ["streetview", "mesh"]) {
+      const pace = planning[mode] == null ? null : speed(planning[mode]);
+      const output = $(`[data-source=${mode}] .estimate`);
+      output.innerHTML = pace ? `${icon(pace.icon)}${pace.name} to plan` : "";
+      output.classList.toggle("alert", !!pace?.alert);
+    }
+    outputs.satellite.textContent = satellite ? `${plural(satellite.tiles, "tile")} (~${duration(satellite.seconds)})` : "";
+    details.satellite.textContent = satellite
+      ? `${resolution(satellite.meters_per_pixel)} (${megapixels(satellite.width, satellite.height)})` : "";
+    outputs.terrain.textContent = terrain ? `${plural(terrain.tiles, "tile")} (~${duration(terrain.seconds)})` : "";
+    details.terrain.textContent = terrain ? `${resolution(terrain.meters_per_pixel)} elevation` : "";
+  }, 120);
+}
+
+function renderArea() {
+  const area = state.area;
+  $("#redraw").innerHTML = state.drawing ? "Cancel" : `${icon("pencil")}${area ? "Redraw" : "Draw area"}`;
+  $("#area").innerHTML = area ? `<strong>${esc(dimensions(area))}</strong>`
+    : `<span class="muted">${state.drawing ? "Drag on the map to draw it." : "No area yet."}</span>`;
+  renderPreviewButton();
+}
+
+// Progress
+
+function renderProgress(container, job) {
+  const bar = $(".bar", container);
+  const known = job.total != null && job.total > 0;
+  bar.classList.toggle("indeterminate", !known);
+  $("i", bar).style.width = known ? `${Math.min(100, job.done / job.total * 100)}%` : "";
+  let amount = "";
+  if (job.unit === "bytes") amount = `${(job.done / 1e6).toFixed(1)}${job.total ? ` / ${(job.total / 1e6).toFixed(1)}` : ""} MB`;
+  else if (known) amount = `${number(job.done)} / ${number(job.total)}`;
+  else if (job.done) amount = number(job.done);
+  $(".progress-text", container).innerHTML =
+    `<span>${esc(job.stopping ? "Stopping…" : job.phase)}</span><span>${esc(amount)}</span>`;
+}
+
+const running = (kind, id) => {
+  const job = state.job;
+  return job?.state === "running" && job.kind === kind && (id === undefined || job.capture === id);
+};
+
+// Library
+
+async function loadCaptures() {
+  try {
+    state.captures = await api("/api/captures");
+  } catch (error) {
+    $("#captures").innerHTML = `<li class="empty error">${esc(error.message)}</li>`;
+    return;
+  }
+  setData("outlines", collection(state.captures.filter(c => c.bounds).map(c => polygon(c.bounds, {id: c.id}))));
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const list = $("#captures");
+  $("#capture-count").textContent = state.captures.length || "";
+  if (!state.captures.length) {
+    list.innerHTML = `<li class="empty">No captures here yet.</li>`;
+    return;
+  }
+  list.innerHTML = state.captures.map(c => {
+    if (!c.bounds) {
+      return `<li><div class="capture"><span class="when">${esc(c.id)}</span><span class="state failed">${STATES[c.state]}</span>
+        <span class="detail">${esc(c.error)}</span></div></li>`;
+    }
+    const live = running("capture", c.id);
+    const bar = live ? `<span class="bar"><i style="width:${libraryProgress()}%"></i></span>` : "";
+    const status = live ? "running" : c.state;
+    return `<li><button type="button" class="capture" data-id="${esc(c.id)}">
+      <span class="when">${esc(when(c.started_at))}</span><span class="state ${status}">${STATES[status]}</span>
+      <span class="detail">${esc(c.options.include.map(s => NAMES[s]).join(", "))} (${esc(dimensions(c.bounds))})</span>${bar}
+    </button></li>`;
+  }).join("");
+}
+
+function libraryProgress() {
+  const stages = Object.values(state.job.stages);
+  return (stages.reduce((sum, stage) => sum + stage.done / Math.max(1, stage.total), 0) / stages.length * 100).toFixed(1);
+}
+
+function hoverCapture(id) {
+  for (const button of $$(".capture[data-id]")) button.classList.toggle("hover", button.dataset.id === id);
+  if (state.hovered === id) return;
+  if (state.hovered) map.setFeatureState({source: "outlines", id: state.hovered}, {hover: false});
+  if (id) map.setFeatureState({source: "outlines", id}, {hover: true});
+  state.hovered = id;
+}
+
+// Preview
+
+const stageRows = {
+  streetview: s => [plural(s.photos, s.sphere ? "sphere" : "photo"), !s.meters ? "No mapped roads at this depth"
+    : !s.stops ? "No panoramas on the selected roads"
+    : `${plural(s.stops, "stop")} along ${meters(s.meters)} of road` + (s.gaps ? ` (${plural(s.gaps, "spacing gap")})` : "")],
+  satellite: s => [plural(s.tiles, "tile"), `${resolution(s.meters_per_pixel)} (${megapixels(s.width, s.height)})`],
+  osm: () => ["1 extract", "Clipped from a Geofabrik regional file"],
+  terrain: s => [plural(s.tiles, "tile"), `Zoom ${s.zoom} (${resolution(s.meters_per_pixel)})`],
+  mesh: s => [plural(s.nodes, "node"), `Detail level ${s.level}`],
+};
+
+function renderPreview() {
+  const job = state.job;
+  const planning = running("plan");
+  $("#planning").hidden = !planning;
+  if (planning) renderProgress($("#planning .progress"), job);
+  $("#cancel-plan").hidden = !planning;
+  $("#cancel-plan").disabled = !!job?.stopping;
+  $("#plan").hidden = !state.preview;
+  $("#start").hidden = !state.preview;
+  $("#plan-error").hidden = !state.planError;
+  $("#plan-error").textContent = state.planError || "";
+  if (!state.preview) return;
+  $("#plan-stages").innerHTML = Object.entries(state.preview.stages).map(([mode, info]) => {
+    const [value, detail] = stageRows[mode](info);
+    return `<li>${icon(mode)}<strong>${NAMES[mode]}</strong><span class="value">${esc(value)}</span>
+      <span class="detail">${esc(detail)}</span></li>`;
+  }).join("");
+  const pace = speed(state.preview.seconds);
+  $("#plan-time").innerHTML = `${pace.alert ? icon(pace.icon) : ""}~ ${duration(state.preview.seconds)}`;
+  $("#plan-time").classList.toggle("alert", !!pace.alert);
+}
+
+async function previewPlan(event) {
+  event.preventDefault();
+  const error = $("#settings-error");
+  error.hidden = true;
+  if (!state.area) return;
+  const {planning = {}} = await fetchEstimate();
+  if (!await confirmPlan(planning, readForm())) return;
+  Object.assign(state, {preview: null, planError: null});
+  setData("plan", EMPTY);
+  try {
+    state.job = await api("/api/plan", {bounds: state.area, options: readForm()});
+    state.watched = state.job.id;
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+    return;
+  }
+  location.hash = "#/preview";
+  poll();
+}
+
+// Ask before planning that takes hours or more; resolves true to plan anyway.
+function confirmPlan(planning, options) {
+  const total = Object.values(planning).reduce((sum, seconds) => sum + seconds, 0);
+  if (total < SLOW_PLAN) return Promise.resolve(true);
+  // Levels above 20 also list every level-20 node, which multiplies the lookups.
+  const level = planning.mesh >= SLOW_PLAN && options.mesh_level > 20;
+  const lookups = [planning.streetview != null && "panoramas", planning.mesh != null && "mesh nodes"].filter(Boolean).join(" and ");
+  return confirmSlow("Planning", planning, `Every one of the area's ${lookups} is looked up before the preview appears. ${
+    level ? "Try 3D mesh detail 20 or lower, or a smaller area." : "Try a smaller area."}`, "Preview anyway");
+}
+
+// Ask before a capture that takes days or more; resolves true to start anyway.
+function confirmCapture(preview) {
+  const times = Object.fromEntries(Object.entries(preview.stages).map(([mode, stage]) => [mode, stage.seconds]));
+  if (preview.seconds < SLOW_CAPTURE) return Promise.resolve(true);
+  const slow = Object.keys(times).filter(mode => mode in SHORTER && times[mode] >= SLOW_CAPTURE);
+  const tips = ["a smaller area", ...slow.map(mode => SHORTER[mode])];
+  return confirmSlow("This capture", times, `Downloads can be stopped and resumed later. To shorten it, try ${
+    tips.length > 1 ? `${tips.slice(0, -1).join(", ")} or ${tips.at(-1)}` : tips[0]}.`, "Start anyway");
+}
+
+// Time per source, why it is slow and what helps; resolves true to go ahead.
+function confirmSlow(subject, times, text, anyway) {
+  const pace = speed(Object.values(times).reduce((sum, seconds) => sum + seconds, 0));
+  const rows = Object.entries(times).map(([mode, seconds]) => {
+    const {icon: name, alert} = speed(seconds);
+    return `<li>${icon(mode)}<span>${NAMES[mode]}</span>
+      <span class="estimate ${alert ? "alert" : ""}">${icon(name)}${speed(seconds).name}</span></li>`;
+  }).join("");
+  return ask(`${icon(pace.icon)}${subject} will take ${pace.name}`, !!pace.alert, rows, text, anyway, "Change settings");
+}
+
+function confirmMesh(bytes) {
+  return ask(`${icon("warning")}mesh.glb is ${megabytes(bytes)}`, true, "", "Its textures may need several GB of "
+    + "graphics memory, which can crash this tab. Blender handles large meshes better.", "Show anyway", "Cancel");
+}
+
+// Resolves true to go ahead.
+function ask(title, alert, rows, text, anyway, back) {
+  const dialog = $("#ask");
+  $("h2", dialog).innerHTML = title;
+  $("h2", dialog).classList.toggle("alert", alert);
+  $("ul", dialog).innerHTML = rows;
+  $("ul", dialog).hidden = !rows;
+  $("p", dialog).textContent = text;
+  $("[value=go]", dialog).textContent = anyway;
+  $("[value='']", dialog).textContent = back;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "go"), {once: true}));
+}
+
+function showPlan() {
+  setData("plan", state.preview.layers);
+  map.fitBounds(lngLatBounds(state.preview.bounds), {padding: 80, maxZoom: 18, duration: 600});
+  syncMap();
+}
+
+// Capture
+
+async function openCapture(id) {
+  let detail;
+  try {
+    detail = await api(capturePath(id));
+  } catch (error) {
+    if (state.captureId !== id) return;
+    $("#capture-title").textContent = "Capture";
+    $("#capture-error").textContent = error.message;
+    $("#capture-error").hidden = false;
+    return;
+  }
+  if (state.view !== "capture" || state.captureId !== id) return;
+  const first = state.capture?.id !== id;
+  state.capture = detail;
+  if (first) {
+    setData("bounds", collection([polygon(detail.bounds)]));
+    setData("plan", absolute(capturePath(id, "/plan")));
+    map.fitBounds(lngLatBounds(detail.bounds), {padding: 60, maxZoom: 18, duration: 600});
+  }
+  refresh(detail.stages, true);
+  renderCapture();
+  syncMap();
+}
+
+// Bring map data up to the saved counts; imagery reloads at most every few seconds while it grows.
+function refresh(stages, force = false) {
+  const id = state.capture.id, live = state.live;
+  if (stages.streetview && stages.streetview.done !== live.streetview) {
+    live.streetview = stages.streetview.done;
+    loadPhotos();
+  }
+  for (const mode of ["satellite", "terrain"]) {
+    const info = stages[mode];
+    if (!info?.done || info.done === live[mode]) continue;
+    if (!force && info.done < info.total && Date.now() - (live[`${mode}At`] || 0) < 2500) continue;
+    live[mode] = info.done;
+    live[`${mode}At`] = Date.now();
+    setRaster(mode, {...state.capture.stages[mode], ...info});
+  }
+  if (stages.osm?.done && !live.osm) {
+    live.osm = true;
+    setData("osm", absolute(capturePath(id, "/osm")));
+  }
+}
+
+async function loadPhotos() {
+  if (state.photoLoading) {
+    state.photoAgain = true;
+    return;
+  }
+  const id = state.capture.id;
+  state.photoLoading = true;
+  try {
+    const data = await api(capturePath(id, `/photos?after=${state.photoCount}`));
+    if (state.capture?.id !== id) return;
+    state.photoCount = data.count;
+    state.photos.push(...data.features);
+    setData("photos", collection(state.photos));
+    renderLayers();
+  } catch {
+    // The next progress update retries.
+  } finally {
+    state.photoLoading = false;
+    if (state.photoAgain && state.capture?.id === id) {
+      state.photoAgain = false;
+      loadPhotos();
+    }
+  }
+}
+
+function renderCapture() {
+  const c = state.capture;
+  if (!c) return;
+  const job = state.job;
+  const live = running("capture", c.id);
+  const status = live ? "running" : c.state;
+  $("#capture-title").textContent = when(c.started_at);
+  $("#capture-meta").textContent = `${STATES[status]}: ${dimensions(c.bounds)}`;
+  $("#progress").hidden = !live;
+  if (live) {
+    const downloadPhase = DOWNLOADS.has(job.phase) && !job.stopping;
+    $("#phase").hidden = downloadPhase;
+    renderProgress($("#phase"), job);
+    const downloading = Object.values(job.stages).some(stage => stage.done < stage.total);
+    $("#progress .label").textContent = downloading ? `Capturing: about ${duration(job.seconds)} left` : "Building files";
+    // Only the stage downloading now gets a bar, unless the phase line below already shows one.
+    const active = downloadPhase && Object.keys(job.stages).find(mode => job.stages[mode].done < job.stages[mode].total);
+    $("#progress-stages").innerHTML = Object.entries(job.stages).map(([mode, s]) => {
+      const finished = s.done >= s.total;
+      const bar = mode === active ? `<span class="bar"><i style="width:${(s.done / Math.max(1, s.total) * 100).toFixed(1)}%"></i></span>` : "";
+      return `<li class="${finished ? "done" : ""}">${icon(mode)}<span>${NAMES[mode]}</span>
+        <span class="value">${finished ? "Done" : `${number(s.done)} / ${number(s.total)}`}</span>${bar}</li>`;
+    }).join("");
+  }
+  // Stopping on request is not an error worth showing.
+  const error = !live && c.error && c.state !== "complete" && c.error !== "Interrupted";
+  $("#capture-error").hidden = !error;
+  $("#capture-error").textContent = error ? c.error : "";
+  $("#stop").hidden = !live;
+  $("#stop").disabled = !!job?.stopping;
+  $("#stop").textContent = job?.stopping ? "Stopping…" : "Stop";
+  $("#resume").hidden = live || c.state === "complete";
+  $("#resume").disabled = running("plan") || running("capture");
+  $("#folder").textContent = c.folder;
+  $("#files").innerHTML = Object.entries(c.files).map(([name, bytes]) =>
+    `<li><span>${esc(name)}</span><span class="value">${megabytes(bytes)}</span></li>`).join("")
+    || `<li class="muted">No merged files yet.</li>`;
+  renderLayers();
+}
+
+function renderLayers() {
+  const c = state.capture;
+  if (!c) return;
+  const s = c.stages;
+  const row = (attribute, checked, name, value, disabled) => `<label class="toggle">
+    <input type="checkbox" ${attribute} ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}>
+    <span>${name}</span><span class="value">${esc(value)}</span></label>`;
+  const toggle = (key, name, value = "", disabled = false) => row(`data-toggle="${key}"`, state.toggles[key], name, value, disabled);
+  const solid = (kind, name, value, disabled) => row(`data-solid="${kind}"`, state.solid === kind, name, value, disabled);
+  const groups = [];
+  if (s.streetview) {
+    const skipped = s.streetview.skipped ? ` (${number(s.streetview.skipped)} skipped)` : "";
+    groups.push(["streetview", toggle("photos", "Photos", `${number(state.photos.length)}${skipped}`)
+      + toggle("route", "Planned route")]);
+  }
+  if (s.satellite) {
+    groups.push(["satellite", toggle("satellite", "Imagery", `zoom ${s.satellite.zoom} (${tileCount("satellite")})`)]);
+  }
+  if (s.osm) {
+    const saved = state.live.osm || s.osm.done;
+    const note = saved ? "" : "not saved";
+    groups.push(["osm", toggle("buildings", "Buildings", note, !saved) + toggle("roads", "Roads and paths", note, !saved)
+      + toggle("water", "Water and land", note, !saved)]);
+  }
+  if (s.terrain) {
+    const saved = (state.live.terrain ?? s.terrain.done) >= s.terrain.total;
+    groups.push(["terrain", toggle("terrain", "Hillshade", `zoom ${s.terrain.zoom} (${tileCount("terrain")})`)
+      + solid("relief", "3D relief", saved ? "" : "after download", !saved)]);
+  }
+  if (s.mesh) {
+    const glb = c.files["mesh.glb"];
+    groups.push(["mesh", solid("mesh", "Show in 3D", state.meshLoading ? "Loading…" : glb ? megabytes(glb)
+      : `${number(s.mesh.done)} / ${plural(s.mesh.total, "node")}`, !glb)]);
+  }
+  groups.push(["map", toggle("outline", "Capture outline") + toggle("basemap", "Basemap")]);
+  $("#layers").innerHTML = groups.map(([mode, rows]) =>
+    `<li class="group"><p>${icon(mode)}${NAMES[mode] ?? "Map"}</p>${rows}</li>`).join("");
+}
+
+function tileCount(mode) {
+  const stage = state.capture.stages[mode];
+  const done = state.live[mode] ?? stage.done;
+  return done >= stage.total ? plural(stage.total, "tile") : `${number(done)} / ${plural(stage.total, "tile")}`;
+}
+
+// Photo viewer
+
+function showPhoto(index) {
+  const photo = state.photos[index];
+  if (!photo) return;
+  state.selected = index;
+  const p = photo.properties;
+  const image = $("#viewer-image");
+  image.src = absolute(capturePath(state.capture.id, `/files/${p.filename.split("/").map(encodeURIComponent).join("/")}`));
+  image.classList.toggle("sphere", p.heading == null);
+  const facts = [`#${p.sequence}`, p.side ?? "360°", p.heading != null ? `${Math.round(p.heading)}°` : null, p.imagery_date];
+  $("#viewer-text").innerHTML = `<strong>${esc(p.path_name || "Unnamed road")}</strong><span>${esc(facts.filter(Boolean).join(", "))}</span>`;
+  $("#viewer-link").href = p.streetview_url;
+  $("#viewer-prev").disabled = index === 0;
+  $("#viewer-next").disabled = index === state.photos.length - 1;
+  $("#viewer").hidden = false;
+  const at = photo.geometry.coordinates;
+  const features = [point(at)];
+  if (p.heading != null) features.unshift({type: "Feature", properties: {},
+    geometry: {type: "LineString", coordinates: [at, destination(at, p.heading, 18)]}});
+  setData("selected", collection(features));
+  if (!map.getBounds().contains(at)) map.easeTo({center: at});
+}
+
+function closeViewer() {
+  $("#viewer").hidden = true;
+  state.selected = null;
+  setData("selected", EMPTY);
+}
+
+// Jobs
+
+let pollTimer = null;
+
+async function poll() {
+  clearTimeout(pollTimer);
+  let job;
+  try {
+    job = await api("/api/job");
+  } catch {
+    pollTimer = setTimeout(poll, 3000);
+    return;
+  }
+  state.job = job;
+  if (job?.state === "running") state.watched = job.id;
+  // Small plans can end before the first poll, so match the job this page started rather than a state change.
+  const finished = !!job && job.state !== "running" && state.watched === job.id;
+  if (finished) state.watched = null;
+  if (job?.kind === "plan" && finished) {
+    if (job.state === "done") {
+      try {
+        state.preview = await api("/api/preview");
+        if (state.view === "preview") showPlan();
+      } catch (error) {
+        state.planError = error.message;
+      }
+    } else if (job.state === "failed") {
+      state.planError = job.error;
+    } else if (state.view === "preview") {
+      location.hash = "#/new";
+    }
+  }
+  if (state.view === "preview") renderPreview();
+  if (job?.kind === "capture" && state.capture?.id === job.capture && state.view === "capture") {
+    if (finished) {
+      await openCapture(job.capture);
+    } else {
+      refresh(job.stages);
+      renderCapture();
+    }
+  }
+  if (state.view === "library") {
+    const bar = job?.kind === "capture" && $(`.capture[data-id="${CSS.escape(job.capture)}"] .bar i`);
+    if (finished || (running("capture") && !bar)) loadCaptures();
+    else if (bar) bar.style.width = `${libraryProgress()}%`;
+  }
+  if (job?.state === "running") pollTimer = setTimeout(poll, 700);
+}
+
+// Views
+
+function show(view) {
+  for (const section of $$(".view")) section.hidden = section.id !== view;
+  if (view !== "new" && state.drawing) setDrawing(false);
+  if (view !== "capture" && state.captureId) {
+    clearCaptureLayers();
+    state.capture = state.captureId = null;
+  }
+  state.view = view;
+  if (map.getCanvas().style.cursor !== "crosshair") map.getCanvas().style.cursor = "";
+  syncMap();
+}
+
+function route() {
+  const [, view, id] = (location.hash.slice(1) || "/").split("/");
+  if (view === "new") {
+    // A new capture starts from a fresh area; only returning from its preview keeps it.
+    if (state.view !== "new" && state.view !== "preview") setArea(null);
+    show("new");
+    renderArea();
+    estimate();
+    if (!state.area) setDrawing(true);
+  } else if (view === "preview") {
+    if (!state.preview && !state.planError && !running("plan") && state.watched !== state.job?.id) {
+      location.replace("#/new");
+      return;
+    }
+    show("preview");
+    renderPreview();
+    if (state.preview) showPlan();
+  } else if (view === "capture" && id) {
+    const captureId = decodeURIComponent(id);
+    if (state.captureId !== captureId) {
+      show("capture");
+      clearCaptureLayers();
+      state.captureId = captureId;
+      state.capture = null;
+      $("#capture-title").textContent = "";
+      $("#capture-meta").textContent = "";
+      $("#layers").innerHTML = "";
+      $("#files").innerHTML = "";
+      $("#capture-error").hidden = true;
+      $("#progress").hidden = true;
+    }
+    openCapture(captureId);
+  } else {
+    show("library");
+    loadCaptures();
+  }
+}
+
+// Events
+
+function bind() {
+  $("#settings").addEventListener("input", () => {
+    updateForm();
+    estimate();
+  });
+  $("#settings").addEventListener("submit", previewPlan);
+  $("#redraw").addEventListener("click", () => setDrawing(!state.drawing));
+
+  $("#preview-back").addEventListener("click", async () => {
+    if (running("plan")) await api("/api/stop", {}).catch(() => null);
+    location.hash = "#/new";
+  });
+  $("#cancel-plan").addEventListener("click", async () => {
+    state.job = await api("/api/stop", {}).catch(() => state.job);
+    renderPreview();
+  });
+  $("#start").addEventListener("click", async () => {
+    if (!await confirmCapture(state.preview)) {
+      location.hash = "#/new";
+      return;
+    }
+    $("#start").disabled = true;
+    try {
+      state.job = await api("/api/capture", {plan: state.preview.plan});
+      state.watched = state.job.id;
+      state.preview = null;
+      location.hash = `#/capture/${encodeURIComponent(state.job.capture)}`;
+      poll();
+    } catch (error) {
+      state.planError = error.message;
+      renderPreview();
+    } finally {
+      $("#start").disabled = false;
+    }
+  });
+
+  $("#captures").addEventListener("click", event => {
+    const button = event.target.closest(".capture[data-id]");
+    if (button) location.hash = `#/capture/${encodeURIComponent(button.dataset.id)}`;
+  });
+  $("#captures").addEventListener("mouseover", event => hoverCapture(event.target.closest(".capture[data-id]")?.dataset.id ?? null));
+  $("#captures").addEventListener("mouseleave", () => hoverCapture(null));
+
+  $("#layers").addEventListener("change", event => {
+    const {toggle: key, solid} = event.target.dataset;
+    if (solid) return setSolid(solid, event.target.checked);
+    if (!key) return;
+    state.toggles[key] = event.target.checked;
+    store.set("toggles", state.toggles);
+    if (key === "photos" && !event.target.checked) closeViewer();
+    syncMap();
+  });
+  $("#stop").addEventListener("click", async () => {
+    state.job = await api("/api/stop", {}).catch(() => state.job);
+    renderCapture();
+  });
+  $("#resume").addEventListener("click", async () => {
+    try {
+      state.job = await api(capturePath(state.capture.id, "/resume"), {});
+      state.watched = state.job.id;
+      renderCapture();
+      poll();
+    } catch (error) {
+      $("#capture-error").textContent = error.message;
+      $("#capture-error").hidden = false;
+    }
+  });
+  $("#copy-folder").addEventListener("click", async event => {
+    try {
+      await navigator.clipboard.writeText(state.capture.folder);
+      event.target.textContent = "Copied";
+      setTimeout(() => { event.target.textContent = "Copy path"; }, 1500);
+    } catch { /* Clipboard access can be refused. */ }
+  });
+
+  $("#viewer-prev").addEventListener("click", () => showPhoto(state.selected - 1));
+  $("#viewer-next").addEventListener("click", () => showPhoto(state.selected + 1));
+  $("#viewer-close").addEventListener("click", closeViewer);
+
+  const search = $("#search"), results = $("#search-results");
+  search.addEventListener("submit", async event => {
+    event.preventDefault();
+    const query = search.q.value.trim();
+    if (!query) return;
+    results.hidden = false;
+    results.innerHTML = `<li class="note">Searching…</li>`;
+    try {
+      state.search = await api(`/api/search?q=${encodeURIComponent(query)}`);
+      results.innerHTML = state.search.map((place, i) => `<li><button type="button" data-index="${i}">${esc(place.name)}
+        <span class="detail">${esc(place.label.split(", ").slice(1).join(", "))}</span></button></li>`).join("")
+        || `<li class="note">No places found.</li>`;
+    } catch (error) {
+      results.innerHTML = `<li class="note">${esc(error.message)}</li>`;
+    }
+  });
+  results.addEventListener("click", event => {
+    const place = state.search[event.target.closest("[data-index]")?.dataset.index];
+    if (!place) return;
+    results.hidden = true;
+    map.flyTo({center: [place.lon, place.lat], zoom: 16});
+  });
+  search.q.addEventListener("input", () => { if (!search.q.value) results.hidden = true; });
+
+  document.addEventListener("keydown", event => {
+    if (event.target.matches("input, select, textarea") && event.key !== "Escape") return;
+    if (event.key === "Escape") {
+      if (state.drawing && !state.drag) setDrawing(false);
+      else if (!results.hidden) results.hidden = true;
+      else if (!$("#viewer").hidden) closeViewer();
+    } else if (!$("#viewer").hidden && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      showPhoto(state.selected + (event.key === "ArrowLeft" ? -1 : 1));
+    }
+  });
+  window.addEventListener("hashchange", route);
+  window.addEventListener("mouseup", endDrag);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+}
+
+function bindMap() {
+  map.on("mousedown", startDrag);
+  map.on("mousedown", startOrbit);
+  map.on("mousemove", moveDrag);
+  map.on("mouseup", endDrag);
+  map.on("click", "photos", event => {
+    const sequence = event.features[0].properties.sequence;
+    showPhoto(state.photos.findIndex(photo => photo.properties.sequence === sequence));
+  });
+  map.on("click", "outlines-fill", event => {
+    location.hash = `#/capture/${encodeURIComponent(event.features[0].properties.id)}`;
+  });
+  map.on("mousemove", "outlines-fill", event => hoverCapture(event.features[0].properties.id));
+  map.on("mouseleave", "outlines-fill", () => hoverCapture(null));
+  for (const layer of ["photos", "outlines-fill"]) {
+    map.on("mouseenter", layer, () => { if (!state.drawing) map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", layer, () => { if (!state.drawing) map.getCanvas().style.cursor = ""; });
+  }
+  map.on("moveend", () => store.set("view", {center: map.getCenter().toArray(), zoom: map.getZoom()}));
+  // Tile events show the newest raster requested its tiles; idle covers tiles that were all missing.
+  map.on("sourcedata", event => { if (event.tile) swapRasters(event); });
+  map.on("idle", swapRasters);
+  map.on("error", event => {
+    // Tiles not saved yet are expected while a capture runs.
+    if (event.sourceId?.startsWith("raster-")) return;
+    console.warn(event.error);
+  });
+}
+
+async function init() {
+  [state.config, state.icons] = await Promise.all([api("/api/config"), api("/api/icons")]);
+  $("#root").textContent = state.config.root;
+  $("#root").title = state.config.root;
+  for (const slot of $$("[data-icon]")) slot.outerHTML = icon(slot.dataset.icon);
+  fillForm({...state.config.defaults, include: [], ...store.get("options", {})});
+  // Sliders start hidden inside closed sources, so their level names are placed once shown.
+  const resized = new ResizeObserver(entries => entries.forEach(entry => placeTag(entry.target)));
+  for (const range of $$(".range")) resized.observe(range);
+
+  const view = store.get("view", {center: [12.49, 41.89], zoom: 2});
+  map = new maplibregl.Map({container: "map", style: await basemap(), center: view.center, zoom: view.zoom,
+                            attributionControl: {compact: true}, dragRotate: false, touchPitch: false,
+                            maxPitch: 80});  // 3D views tilt past MapLibre's 60°, toward Google Earth's low views.
+  map.touchZoomRotate.disableRotation();
+  map.keyboard.disableRotation();
+  navigation = new maplibregl.NavigationControl({showCompass: false});
+  map.addControl(navigation, "top-right");
+  map.addControl(new maplibregl.ScaleControl({unit: "metric"}), "bottom-left");
+  await map.once("load");
+
+  map.addImage("corner", cornerImage(), {pixelRatio: 2});
+  for (const source of ["osm", "bounds", "plan", "photos", "selected", "area", "corners"]) {
+    map.addSource(source, {type: "geojson", data: EMPTY});
+  }
+  map.addSource("outlines", {type: "geojson", data: EMPTY, promoteId: "id"});
+  for (const layer of OVERLAYS) addLayer(layer);
+  bindMap();
+  bind();
+  setArea(state.area);
+
+  state.job = await api("/api/job").catch(() => null);
+  if (state.job?.kind === "plan" && state.job.state === "done") state.preview = await api("/api/preview").catch(() => null);
+  if (running("plan") && !location.hash.startsWith("#/preview")) location.hash = "#/preview";
+  if (running("capture") && !location.hash.startsWith("#/capture")) location.hash = `#/capture/${encodeURIComponent(state.job.capture)}`;
+  route();
+  if (state.job?.state === "running") poll();
+  if (!store.get("view", null) && state.view === "library") {
+    await loadCaptures();
+    const bounds = state.captures.filter(c => c.bounds).map(c => c.bounds);
+    if (bounds.length) {
+      map.fitBounds(lngLatBounds([Math.min(...bounds.map(b => b[0])), Math.min(...bounds.map(b => b[1])),
+                                  Math.max(...bounds.map(b => b[2])), Math.max(...bounds.map(b => b[3]))]),
+                    {padding: 80, maxZoom: 16, duration: 0});
+    }
+  }
+}
+
+init().catch(error => {
+  document.body.insertAdjacentHTML("afterbegin", `<p class="error fatal">Aleph could not start: ${esc(error.message)}</p>`);
+});

@@ -7,6 +7,10 @@
   for you (<em>or your LLM</em>)
 </p>
 
+<p align="center">
+  <img src="resources/demo.webp" alt="The dashboard capturing the Colosseum, then 3D meshes of the Eiffel Tower, Sydney Opera House, and Matterhorn" width="800">
+</p>
+
 Aleph does two things:
 
 - Lets you draw a rectangle on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos, textured 3D models).
@@ -23,7 +27,7 @@ This was born as a way to let LLMs quickly gather information from the physical 
 
 ## Install
 
-Requires Python 3.11+. Pillow is the only dependency. No API keys are required.
+Requires Python 3.11+. The only dependencies are Pillow and numpy. No API keys are required.
 
 ```sh
 git clone https://github.com/Belluxx/Aleph.git
@@ -41,17 +45,13 @@ alephgeo --help
 
 ## Open the dashboard
 
-From the dashboard you can select an area on the map and download all the data you need.
-
 ```sh
-alephgeo dashboard --root captures
+alephgeo dashboard -o captures
 ```
 
-The dashboard opens in your browser at `http://127.0.0.1:8100`. Your captures will be saved in `captures`.
+The dashboard opens in your browser at `http://127.0.0.1:8100`. Draw a rectangle on the map, choose the sources and their settings, check the preview and time estimate, then start the capture. Open any capture to show or hide each layer, or to explore its 3D mesh or terrain relief in 3D. Captures are saved in `captures`.
 
-<p align="center">
-  <img src="resources/show_video.gif" alt="Aleph dashboard demo" width="640">
-</p>
+The basemap comes from [OpenFreeMap](https://openfreemap.org) and needs an internet connection.
 
 ## Use the CLI
 

@@ -36,9 +36,8 @@ def block(kind, payload):
 
 
 class PBFTests(unittest.TestCase):
-    def test_packed_integer_fast_paths_match_independent_encoder(self):
-        # Exercise byte translation, mixed runs, bulk lanes, and the long-varint
-        # fallback on both sides of the 512-byte optimization threshold.
+    def test_packed_integers_match_independent_encoder(self):
+        # Short fields decode in Python, long ones with numpy; cover both sides of the threshold.
         cases = {
             "single_byte": list(range(64)) * 10,
             "short": [0, 63, 64, 127, 128, 8191, 8192, 2**20, 2**27 - 1],
@@ -54,7 +53,7 @@ class PBFTests(unittest.TestCase):
         self.assertEqual(list(pbf.unpack(uint(2**64 - 1))), [2**64 - 1])
         self.assertEqual(list(pbf.unpack(packed([-2**63, 2**63 - 1], True), True)), [-2**63, 2**63 - 1])
 
-    def test_truncated_or_overflowing_integers_fail_in_every_fast_path(self):
+    def test_truncated_or_overflowing_integers_fail_in_both_decoders(self):
         prefixes = [b"", b"\x00" * 600, packed([128, 8192] * 200), packed([2**40] * 100)]
         for prefix in prefixes:
             for suffix in (b"\x80", uint(2**64)):
