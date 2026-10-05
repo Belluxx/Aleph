@@ -21,22 +21,6 @@ const SCALES = {
   sphere_zoom: Object.fromEntries(["Thumbnail", "Low", "Medium", "High", "Very high", "Maximum"]
     .map((name, z) => [z, `${name} (${number(512 * 2 ** z)} px)`])),
 };
-const ICONS = {
-  streetview: '<path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/>',
-  satellite: '<path d="M9.5 9.5h5v7h-5zM2 10h5v5H2zM17 10h5v5h-5zM4.5 10v5M19.5 10v5M7 12.5h2.5M14.5 12.5H17M12 9.5v-3M9.5 5c1.5 1.3 3.5 1.3 5 0"/>',
-  osm: '<path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>',
-  terrain: '<path d="M2 20 9 8l4 6 3-4 6 10z"/>',
-  mesh: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>',
-  map: '<path d="M12 4l9 5-9 5-9-5zM3 14l9 5 9-5"/>',
-  sides: '<circle cx="12" cy="12" r="2"/><path d="M8 12H3m3-3-3 3 3 3M16 12h5m-3-3 3 3-3 3"/>',
-  sphere: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.5"/><ellipse cx="12" cy="12" rx="3.5" ry="9"/>',
-  pencil: '<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8zM14.5 6.5l3 3"/>',
-  bolt: '<path d="M13.5 2 5 13.5h6.5L10.5 22 19 10.5h-6.5z"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 6.5V12l3.5 2.5"/>',
-  turtle: '<path d="M2.5 15.5 5 11l3.5-2.5h4L16 11l2.5 4.5zM7 15.5 8.5 12h4l1.5 3.5M17.4 13.5H22V10h-3.5l-2 2M5 15.5V19h2.5v-3.5M13.5 15.5V19H16v-3.5"/>',
-  warning: '<path d="M12 3 22 20H2zM12 9v5.5M12 16v1.8"/>',
-  error: '<path d="M8.3 3h7.4L21 8.3v7.4L15.7 21H8.3L3 15.7V8.3zM9 9l6 6M15 9l-6 6"/>',
-};
 // Planning times are shown coarsely, since the estimate is rough, rounded to the nearest unit at half of it.
 // Hours or more ask before planning.
 const SPEEDS = [{limit: 30, name: "seconds", icon: "bolt"}, {limit: 1800, name: "minutes", icon: "clock"},
@@ -60,7 +44,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const plural = (count, one, many = `${one}s`) => `${number(count)} ${count === 1 ? one : many}`;
-const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+const icon = name => state.icons[name].replace("<svg ", '<svg class="icon" aria-hidden="true" ');
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const absolute = path => location.origin + path;
 const capturePath = (id, path = "") => `/api/captures/${encodeURIComponent(id)}${path}`;
@@ -141,6 +125,7 @@ function destination([lon, lat], heading, length) {
 
 const state = {
   config: null,
+  icons: null,  // SVG markup of icons/*.svg, by file name.
   captures: [],
   job: null,
   view: null,
@@ -1323,7 +1308,7 @@ function bindMap() {
 }
 
 async function init() {
-  state.config = await api("/api/config");
+  [state.config, state.icons] = await Promise.all([api("/api/config"), api("/api/icons")]);
   $("#root").textContent = state.config.root;
   $("#root").title = state.config.root;
   for (const slot of $$("[data-icon]")) slot.outerHTML = icon(slot.dataset.icon);

@@ -307,6 +307,8 @@ class Dashboard:
                 return (WEB / "index.html").read_bytes(), "text/html; charset=utf-8", 0
             case "GET", [("app.js" | "style.css") as name]:
                 return (WEB / name).read_bytes(), mimetypes.guess_type(name)[0], 0
+            case "GET", ["api", "icons"]:
+                return {path.stem: path.read_text() for path in (WEB / "icons").glob("*.svg")}
             case "GET", ["api", "config"]:
                 return dict(root=str(self.root), defaults=capture.DEFAULT_OPTIONS)
             case "GET", ["api", "job"]:
