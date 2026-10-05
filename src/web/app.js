@@ -31,7 +31,20 @@ const ICONS = {
   sides: '<circle cx="12" cy="12" r="2"/><path d="M8 12H3m3-3-3 3 3 3M16 12h5m-3-3 3 3-3 3"/>',
   sphere: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.5"/><ellipse cx="12" cy="12" rx="3.5" ry="9"/>',
   pencil: '<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8zM14.5 6.5l3 3"/>',
+  bolt: '<path d="M13.5 2 5 13.5h6.5L10.5 22 19 10.5h-6.5z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 6.5V12l3.5 2.5"/>',
+  turtle: '<path d="M2.5 16a7.5 7 0 0 1 15 0zM5.5 16v3M14.5 16v3M17 13.5h3.5a1.75 1.75 0 0 0 0-3.5H19M7 16l1.5-4.5h3L13 16"/>',
+  warning: '<path d="M12 3 22 20H2zM12 9v5.5M12 16v1.8"/>',
+  error: '<path d="M8.3 3h7.4L21 8.3v7.4L15.7 21H8.3L3 15.7V8.3zM9 9l6 6M15 9l-6 6"/>',
 };
+// Planning times are shown coarsely, since the estimate is rough, rounded to the nearest unit at half of it.
+// Hours or more ask before planning.
+const SPEEDS = [{limit: 30, name: "seconds", icon: "bolt"}, {limit: 1800, name: "minutes", icon: "clock"},
+                {limit: 12 * 3600, name: "hours", icon: "turtle"},
+                {limit: 3.5 * 86400, name: "days", icon: "warning", alert: true},
+                {limit: 15 * 86400, name: "weeks", icon: "error", alert: true},
+                {limit: Infinity, name: "months", icon: "error", alert: true}];
+const SLOW_PLAN = SPEEDS[1].limit;
 // Progress phases that a capture stage row already shows.
 const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tiles", "3D mesh"]);
 
@@ -83,6 +96,7 @@ function megapixels(width, height) {
   const total = width * height / 1e6;
   return `${total < 1 ? total.toLocaleString("en-US", {maximumSignificantDigits: 2}) : number(total)} MP`;
 }
+const speed = seconds => SPEEDS.find(s => seconds < s.limit);
 const megabytes = bytes => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB`
   : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 
@@ -472,24 +486,34 @@ function renderPreviewButton() {
 let estimateTimer = null;
 let estimateCount = 0;
 
+// Imagery sizes and download times, and how long Street View and 3D mesh take to plan.
+async function fetchEstimate() {
+  const {include, satellite_zoom, terrain_zoom, mesh_level, streetview_workers, satellite_workers, terrain_workers,
+         mesh_workers, delay} = readForm();
+  if (!state.area || include.every(mode => mode === "osm")) return {};
+  try {
+    return await api("/api/estimate", {bounds: state.area, options: {include, satellite_zoom, terrain_zoom, mesh_level,
+      streetview_workers, satellite_workers, terrain_workers, mesh_workers, delay}});
+  } catch {
+    return {};  // Invalid values are reported by Preview.
+  }
+}
+
 function estimate() {
   clearTimeout(estimateTimer);
   estimateTimer = setTimeout(async () => {
     const count = ++estimateCount;
-    const {include, satellite_zoom, terrain_zoom, satellite_workers, terrain_workers, delay} = readForm();
     const outputs = {satellite: $("[data-source=satellite] .estimate"), terrain: $("[data-source=terrain] .estimate")};
     const details = {satellite: $("[data-detail=satellite]"), terrain: $("[data-detail=terrain]")};
-    let result = {};
-    if (state.area && (include.includes("satellite") || include.includes("terrain"))) {
-      try {
-        result = await api("/api/estimate", {bounds: state.area, options:
-          {include, satellite_zoom, terrain_zoom, satellite_workers, terrain_workers, delay}});
-      } catch {
-        // Invalid values are reported by Preview.
-      }
-    }
+    const result = await fetchEstimate();
     if (count !== estimateCount) return;
-    const {satellite, terrain} = result;
+    const {satellite, terrain, planning = {}} = result;
+    for (const mode of ["streetview", "mesh"]) {
+      const pace = planning[mode] == null ? null : speed(planning[mode]);
+      const output = $(`[data-source=${mode}] .estimate`);
+      output.innerHTML = pace ? `${icon(pace.icon)}${pace.name} to plan` : "";
+      output.classList.toggle("alert", !!pace?.alert);
+    }
     outputs.satellite.textContent = satellite ? `${plural(satellite.tiles, "tile")} (~${duration(satellite.seconds)})` : "";
     details.satellite.textContent = satellite
       ? `${resolution(satellite.meters_per_pixel)} (${megapixels(satellite.width, satellite.height)})` : "";
@@ -611,6 +635,8 @@ async function previewPlan(event) {
   const error = $("#settings-error");
   error.hidden = true;
   if (!state.area) return;
+  const {planning = {}} = await fetchEstimate();
+  if (!await confirmPlan(planning, readForm())) return;
   Object.assign(state, {preview: null, planError: null});
   setData("plan", EMPTY);
   try {
@@ -623,6 +649,24 @@ async function previewPlan(event) {
   }
   location.hash = "#/preview";
   poll();
+}
+
+// Ask before planning that takes hours or days; resolves true to plan anyway.
+function confirmPlan(planning, options) {
+  const total = Object.values(planning).reduce((sum, seconds) => sum + seconds, 0);
+  if (total < SLOW_PLAN) return Promise.resolve(true);
+  const slow = Object.entries(planning).filter(([, seconds]) => seconds >= SLOW_PLAN).sort((a, b) => b[1] - a[1]);
+  // Levels above 20 also list every level-20 node, which multiplies the lookups.
+  const level = slow.some(([mode]) => mode === "mesh") && options.mesh_level > 20;
+  const dialog = $("#slow-plan");
+  const pace = speed(total);
+  $("h2", dialog).innerHTML = `${icon(pace.icon)}Planning will take ${pace.name}`;
+  $("h2", dialog).classList.toggle("alert", !!pace.alert);
+  $("p", dialog).textContent = `${slow.map(([mode, seconds]) => `${NAMES[mode]} needs ${speed(seconds).name}`).join(" and ")
+    } of lookups before the preview appears. Draw a smaller area${level ? " or set 3D mesh detail to 20 or lower" : ""}.`;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "plan"), {once: true}));
 }
 
 function showPlan() {

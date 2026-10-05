@@ -12,7 +12,7 @@ from PIL import Image
 
 from . import mesh, satellite, streetview, terrain
 from .common import WORKERS, MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
-from .geo import MERCATOR_RADIUS, bounds, collection, coordinate, feature, grid, pixel, tile_ring, tiles
+from .geo import MERCATOR_RADIUS, RADIUS, bounds, collection, coordinate, distance, feature, grid, pixel, tile_ring, tiles
 
 SOURCES = ("streetview", "satellite", "osm", "terrain", "mesh")
 FORMAT_VERSION = 5
@@ -25,10 +25,11 @@ DEFAULT_OPTIONS = dict(
 
 # Average sequential request timings, just to give an idea to the user, not precise
 REQUEST_SECONDS = dict(metadata=0.17, photo=0.46, sphere_tile=0.27, satellite_tile=0.25, terrain_tile=1.39,
-                       mesh_node=0.34)
+                       mesh_node=0.34, coverage_tile=0.25, mesh_bulk=0.45)
 # Options choosing how many requests of each kind run in parallel.
 REQUEST_WORKERS = dict(sphere_tile="streetview_workers", satellite_tile="satellite_workers",
-                       terrain_tile="terrain_workers", mesh_node="mesh_workers")
+                       terrain_tile="terrain_workers", mesh_node="mesh_workers", coverage_tile="streetview_workers",
+                       mesh_bulk="mesh_workers")
 SPHERE_TILES = (1, 2, 8, 32, 128, 512)
 OSM_EXPORT_SECONDS = 10
 
@@ -161,15 +162,43 @@ def estimate(run):
         else:
             counts["terrain_tiles"] = requests["terrain_tile"] = remaining
     options = run["options"]
-
-    def workers(kind):
-        # Requests run one at a time when the user asks for pauses between them.
-        return 1 if options["delay"] or kind not in REQUEST_WORKERS else options[REQUEST_WORKERS[kind]]
-
-    seconds = sum(count * REQUEST_SECONDS[kind] / workers(kind) for kind, count in requests.items())
+    seconds = sum(count * REQUEST_SECONDS[kind] / workers(options, kind) for kind, count in requests.items())
     seconds += counts["osm_maps"] * OSM_EXPORT_SECONDS
     seconds += max(0, sum(requests.values()) - 1) * options["delay"]
     return dict(counts, seconds=math.ceil(seconds))
+
+
+def workers(options, kind):
+    # Requests run one at a time when the user asks for pauses between them.
+    return 1 if options["delay"] or kind not in REQUEST_WORKERS else options[REQUEST_WORKERS[kind]]
+
+
+def planning(area, options):
+    """Rough seconds that planning Street View and 3D mesh spends on requests, by mode.
+
+    Street View lists panoramas in every zoom-17 tile. 3D mesh lists octree nodes four levels at a
+    time, one level after another, from the nodes meeting the area; nodes at level n are about
+    2πR / 2^n wide, and measured counts run about twice that footprint as nodes stack up over terrain
+    and buildings. Excludes reading roads and the first download of a regional OSM file.
+    """
+    result = {}
+    if "streetview" in options["include"]:
+        g = grid(area, 17)
+        count = g["rows"] * g["columns"]
+        result["streetview"] = count * (REQUEST_SECONDS["coverage_tile"] / workers(options, "coverage_tile")
+                                        + options["delay"])
+    if "mesh" in options["include"]:
+        south, west, north, east = area
+        middle = (south + north) / 2
+        width, height = distance((middle, west), (middle, east)), distance((south, west), (north, west))
+        seconds = 0
+        for level in range(0, options["mesh_level"], 4):
+            size = 2 * math.pi * RADIUS / 2**level
+            count = 1 if level == 0 else 2 * (width / size + 1) * (height / size + 1)
+            seconds += math.ceil(count / workers(options, "mesh_bulk")) * REQUEST_SECONDS["mesh_bulk"]
+            seconds += count * options["delay"]
+        result["mesh"] = seconds
+    return {mode: math.ceil(seconds) for mode, seconds in result.items()}
 
 
 def resolution(area, zoom, tile_size=256):

@@ -340,6 +340,7 @@ class Dashboard:
                         stage = dict(mode=mode, grid=grid(area, options[f"{mode}_zoom"]), results=[])
                         result[mode] = dict(imagery(area, stage, 512 if mode == "terrain" else 256),
                                             seconds=capture.estimate(dict(stages=[stage], options=options))["seconds"])
+                result["planning"] = capture.planning(area, options)
                 return result
             case "POST", ["api", "plan"]:
                 return self.plan(body)
