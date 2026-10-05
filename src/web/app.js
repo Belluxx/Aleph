@@ -25,6 +25,9 @@ const ICONS = {
   terrain: '<path d="M2 20 9 8l4 6 3-4 6 10z"/>',
   mesh: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>',
   map: '<path d="M12 4l9 5-9 5-9-5zM3 14l9 5 9-5"/>',
+  sides: '<circle cx="12" cy="12" r="2"/><path d="M8 12H3m3-3-3 3 3 3M16 12h5m-3-3 3 3-3 3"/>',
+  sphere: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.5"/><ellipse cx="12" cy="12" rx="3.5" ry="9"/>',
+  pencil: '<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8zM14.5 6.5l3 3"/>',
 };
 // Progress phases that a capture stage row already shows.
 const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tiles", "3D mesh"]);
@@ -414,9 +417,23 @@ function updateForm() {
     range.style.setProperty("--steps", max - min);
     $(".knob", range).textContent = input.value;
     $(".tag", range).textContent = SCALES[input.name][input.value];
+    placeTag(range);
   }
-  $("#preview-button").disabled = !state.area || !options.include.length;
+  renderPreviewButton();
   store.set("options", options);
+}
+
+// Center the level name under the thumb, kept inside the slider.
+function placeTag(range) {
+  const input = $("input", range), tag = $(".tag", range), width = range.clientWidth;
+  const center = (input.value - input.min) / (input.max - input.min) * (width - 24) + 12;
+  tag.style.left = `${Math.max(0, Math.min(width - tag.offsetWidth, center - tag.offsetWidth / 2))}px`;
+}
+
+function renderPreviewButton() {
+  const button = $("#preview-button"), sources = readForm().include.length;
+  button.disabled = !state.area || !sources;
+  button.textContent = !sources ? "Select one or more sources first" : !state.area ? "Draw an area first" : "Preview";
 }
 
 let estimateTimer = null;
@@ -450,10 +467,10 @@ function estimate() {
 
 function renderArea() {
   const area = state.area;
-  $("#redraw").textContent = state.drawing ? "Cancel" : area ? "Redraw" : "Draw area";
+  $("#redraw").innerHTML = state.drawing ? "Cancel" : `${icon("pencil")}${area ? "Redraw" : "Draw area"}`;
   $("#area").innerHTML = area ? `<strong>${esc(dimensions(area))}</strong>`
     : `<span class="muted">${state.drawing ? "Drag on the map to draw it." : "No area yet."}</span>`;
-  $("#preview-button").disabled = !area || !readForm().include.length;
+  renderPreviewButton();
 }
 
 // Progress
@@ -1006,7 +1023,10 @@ async function init() {
   $("#root").textContent = state.config.root;
   $("#root").title = state.config.root;
   for (const slot of $$("[data-icon]")) slot.outerHTML = icon(slot.dataset.icon);
-  fillForm({...state.config.defaults, ...store.get("options", {})});
+  fillForm({...state.config.defaults, include: [], ...store.get("options", {})});
+  // Sliders start hidden inside closed sources, so their level names are placed once shown.
+  const resized = new ResizeObserver(entries => entries.forEach(entry => placeTag(entry.target)));
+  for (const range of $$(".range")) resized.observe(range);
 
   const view = store.get("view", {center: [12.49, 41.89], zoom: 2});
   map = new maplibregl.Map({container: "map", style: await basemap(), center: view.center, zoom: view.zoom,

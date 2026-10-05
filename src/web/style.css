@@ -221,7 +221,9 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 .segmented label { position: relative; cursor: pointer; }
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 3px 8px;
   border: 1px solid var(--line);
   margin-left: -1px;
@@ -233,9 +235,20 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 .segmented input:checked + span { position: relative; border-color: var(--ink); background: var(--ink); color: var(--paper); }
 .segmented input:focus-visible + span { outline: 2px solid var(--accent); }
 
-.unit { display: inline-flex; align-items: center; gap: 4px; }
-.unit i { color: var(--muted); font: 12px var(--mono); font-style: normal; width: 10px; }
-/* The knob number and level name follow the thumb, which is 24px wide. */
+/* The unit sits inside the input, so inputs with and without one line up. */
+.unit { position: relative; display: inline-flex; }
+.unit input { padding-right: 18px; }
+.unit i {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font: 12px var(--mono);
+  font-style: normal;
+  pointer-events: none;
+}
+/* The knob number follows the thumb, which is 24px wide; script centers the level name under it. */
 .field.slider { flex-direction: column; align-items: stretch; gap: 6px; }
 .range { position: relative; display: block; height: 38px; }
 .range::before {
@@ -263,8 +276,7 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 .tag {
   position: absolute;
   top: 23px;
-  left: calc(var(--at) * (100% - 24px) + 12px);
-  transform: translateX(calc(var(--at) * -100%));
+  left: 0;
   font-size: 12px;
   white-space: nowrap;
   pointer-events: none;
@@ -330,6 +342,7 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
   stroke-width: 1.4;
   stroke-linejoin: miter;
 }
+.small .icon, .segmented .icon { width: 13px; height: 13px; }
 
 .bar { height: 4px; background: var(--line); overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
