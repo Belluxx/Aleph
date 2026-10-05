@@ -54,15 +54,15 @@ def describe(run):
 def proceed():
     print(file=sys.stderr)
     while True:
-        print(f"{style('Proceed with capture?')} [y/N] ", end="", file=sys.stderr, flush=True)
+        print(f"{style('Proceed with capture?')} [Y/n] ", end="", file=sys.stderr, flush=True)
         try:
             answer = input().strip().lower()
         except EOFError:
             print(file=sys.stderr)
             return False
-        if answer in ("y", "yes"):
+        if answer in ("", "y", "yes"):
             return True
-        if answer in ("", "n", "no"):
+        if answer in ("n", "no"):
             return False
         print("Please enter y or n.", file=sys.stderr)
 
