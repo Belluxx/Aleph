@@ -134,9 +134,9 @@ def place_rows(items, stream, *, locations=False):
         kind = ", ".join(category.split(":", 1)[-1].replace("_", " ") for category in categories)
         description = name + (f" ({kind})" if kind else "")
         if locations:
-            description += f" · {item['lat']:.5f}, {item['lon']:.5f}"
+            description += f" at {item['lat']:.5f}, {item['lon']:.5f}"
             if "distance_m" in item:
-                description += f" · {item['distance_m']:.0f} m away"
+                description += f" ({item['distance_m']:.0f} m away)"
         values.append((item["id"], description))
     rows(("ID", "PLACE"), values, stream)
 
@@ -158,12 +158,12 @@ def emit(result, as_json):
         if place := result.get("place"):
             print(f"Selected: {place['label']} ({place['id']})")
         if result["command"] == "satellite":
-            print(f"Saved satellite image · {result['width']} × {result['height']} px")
+            print(f"Saved satellite image ({result['width']} × {result['height']} px)")
             print(result["path"])
         elif result["command"] == "streetview":
             count = len(result["photos"])
             print(f"Saved {count} {'photo' if count == 1 else 'photos'}"
-                  f" · {result['saved_stops']}/{result['requested_stops']} stops")
+                  f" ({result['saved_stops']}/{result['requested_stops']} stops)")
             print(result["photos"][0]["path"] if count == 1 else result["folder"])
             if result["status"] == "partial":
                 print(f"Missing stops: see {Path(result['folder']) / 'result.json'}", file=sys.stderr)

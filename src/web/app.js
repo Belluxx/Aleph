@@ -114,7 +114,7 @@ const lngLatBounds = ([s, w, n, e]) => [[w, s], [e, n]];
 
 function when(iso) {
   const date = new Date(iso);
-  return `${date.toLocaleDateString(undefined, {day: "numeric", month: "short", year: "numeric"})} · ${
+  return `${date.toLocaleDateString(undefined, {day: "numeric", month: "short", year: "numeric"})}, ${
     date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit"})}`;
 }
 
@@ -560,7 +560,7 @@ function hint(text) {
 
 function setDrawing(on) {
   state.drawing = on;
-  hint(on ? "Drag to draw the capture area · Esc to pan instead" : "");
+  hint(on ? "Drag to draw the capture area, or press Esc to pan instead" : "");
   map.getCanvas().style.cursor = on ? "crosshair" : "";
   renderArea();
   syncMap();
@@ -745,7 +745,7 @@ function renderLibrary() {
     const status = live ? "running" : c.state;
     return `<li><button type="button" class="capture" data-id="${esc(c.id)}">
       <span class="when">${esc(when(c.started_at))}</span><span class="state ${status}">${STATES[status]}</span>
-      <span class="detail">${esc(dimensions(c.bounds))} · ${esc(c.options.include.map(s => NAMES[s]).join(", "))}</span>${bar}
+      <span class="detail">${esc(c.options.include.map(s => NAMES[s]).join(", "))} (${esc(dimensions(c.bounds))})</span>${bar}
     </button></li>`;
   }).join("");
 }
@@ -768,10 +768,10 @@ function hoverCapture(id) {
 const stageRows = {
   streetview: s => [plural(s.photos, s.sphere ? "sphere" : "photo"), !s.meters ? "No mapped roads at this depth"
     : !s.stops ? "No panoramas on the selected roads"
-    : `${plural(s.stops, "stop")} along ${meters(s.meters)} of road` + (s.gaps ? ` · ${plural(s.gaps, "spacing gap")}` : "")],
+    : `${plural(s.stops, "stop")} along ${meters(s.meters)} of road` + (s.gaps ? ` (${plural(s.gaps, "spacing gap")})` : "")],
   satellite: s => [plural(s.tiles, "tile"), `${resolution(s.meters_per_pixel)} (${megapixels(s.width, s.height)})`],
   osm: () => ["1 extract", "Clipped from a Geofabrik regional file"],
-  terrain: s => [plural(s.tiles, "tile"), `Zoom ${s.zoom} · ${resolution(s.meters_per_pixel)}`],
+  terrain: s => [plural(s.tiles, "tile"), `Zoom ${s.zoom} (${resolution(s.meters_per_pixel)})`],
   mesh: s => [plural(s.nodes, "node"), `Detail level ${s.level}`],
 };
 
@@ -955,14 +955,14 @@ function renderCapture() {
   const live = running("capture", c.id);
   const status = live ? "running" : c.state;
   $("#capture-title").textContent = when(c.started_at);
-  $("#capture-meta").textContent = `${STATES[status]} · ${dimensions(c.bounds)}`;
+  $("#capture-meta").textContent = `${STATES[status]}: ${dimensions(c.bounds)}`;
   $("#progress").hidden = !live;
   if (live) {
     const downloadPhase = DOWNLOADS.has(job.phase) && !job.stopping;
     $("#phase").hidden = downloadPhase;
     renderProgress($("#phase"), job);
     const downloading = Object.values(job.stages).some(stage => stage.done < stage.total);
-    $("#progress .label").textContent = downloading ? `Capturing · about ${duration(job.seconds)} left` : "Building files";
+    $("#progress .label").textContent = downloading ? `Capturing: about ${duration(job.seconds)} left` : "Building files";
     // Only the stage downloading now gets a bar, unless the phase line below already shows one.
     const active = downloadPhase && Object.keys(job.stages).find(mode => job.stages[mode].done < job.stages[mode].total);
     $("#progress-stages").innerHTML = Object.entries(job.stages).map(([mode, s]) => {
@@ -999,12 +999,12 @@ function renderLayers() {
   const solid = (kind, name, value, disabled) => row(`data-solid="${kind}"`, state.solid === kind, name, value, disabled);
   const groups = [];
   if (s.streetview) {
-    const skipped = s.streetview.skipped ? ` · ${number(s.streetview.skipped)} skipped` : "";
+    const skipped = s.streetview.skipped ? ` (${number(s.streetview.skipped)} skipped)` : "";
     groups.push(["streetview", toggle("photos", "Photos", `${number(state.photos.length)}${skipped}`)
       + toggle("route", "Planned route")]);
   }
   if (s.satellite) {
-    groups.push(["satellite", toggle("satellite", "Imagery", `zoom ${s.satellite.zoom} · ${tileCount("satellite")}`)]);
+    groups.push(["satellite", toggle("satellite", "Imagery", `zoom ${s.satellite.zoom} (${tileCount("satellite")})`)]);
   }
   if (s.osm) {
     const saved = state.live.osm || s.osm.done;
@@ -1014,7 +1014,7 @@ function renderLayers() {
   }
   if (s.terrain) {
     const saved = (state.live.terrain ?? s.terrain.done) >= s.terrain.total;
-    groups.push(["terrain", toggle("terrain", "Hillshade", `zoom ${s.terrain.zoom} · ${tileCount("terrain")}`)
+    groups.push(["terrain", toggle("terrain", "Hillshade", `zoom ${s.terrain.zoom} (${tileCount("terrain")})`)
       + solid("relief", "3D relief", saved ? "" : "after download", !saved)]);
   }
   if (s.mesh) {
@@ -1044,7 +1044,7 @@ function showPhoto(index) {
   image.src = absolute(capturePath(state.capture.id, `/files/${p.filename.split("/").map(encodeURIComponent).join("/")}`));
   image.classList.toggle("sphere", p.heading == null);
   const facts = [`#${p.sequence}`, p.side ?? "360°", p.heading != null ? `${Math.round(p.heading)}°` : null, p.imagery_date];
-  $("#viewer-text").innerHTML = `<strong>${esc(p.path_name || "Unnamed road")}</strong><span>${esc(facts.filter(Boolean).join(" · "))}</span>`;
+  $("#viewer-text").innerHTML = `<strong>${esc(p.path_name || "Unnamed road")}</strong><span>${esc(facts.filter(Boolean).join(", "))}</span>`;
   $("#viewer-link").href = p.streetview_url;
   $("#viewer-prev").disabled = index === 0;
   $("#viewer-next").disabled = index === state.photos.length - 1;
