@@ -45,6 +45,10 @@ const SPEEDS = [{limit: 30, name: "seconds", icon: "bolt"}, {limit: 1800, name: 
                 {limit: 15 * 86400, name: "weeks", icon: "error", alert: true},
                 {limit: Infinity, name: "months", icon: "error", alert: true}];
 const SLOW_PLAN = SPEEDS[1].limit;
+const SLOW_CAPTURE = SPEEDS[2].limit;  // Captures are expected to take a while; days or more ask before starting.
+// Settings that shorten a slow capture, by source.
+const SHORTER = {streetview: "wider Street View spacing", satellite: "a lower satellite zoom", terrain: "a lower terrain zoom",
+                 mesh: "lower 3D mesh detail"};
 // Progress phases that a capture stage row already shows.
 const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tiles", "3D mesh"]);
 
@@ -627,7 +631,9 @@ function renderPreview() {
     return `<li>${icon(mode)}<strong>${NAMES[mode]}</strong><span class="value">${esc(value)}</span>
       <span class="detail">${esc(detail)}</span></li>`;
   }).join("");
-  $("#plan-time").textContent = `~ ${duration(state.preview.seconds)}`;
+  const pace = speed(state.preview.seconds);
+  $("#plan-time").innerHTML = `${pace.alert ? icon(pace.icon) : ""}~ ${duration(state.preview.seconds)}`;
+  $("#plan-time").classList.toggle("alert", !!pace.alert);
 }
 
 async function previewPlan(event) {
@@ -651,27 +657,43 @@ async function previewPlan(event) {
   poll();
 }
 
-// Ask before planning that takes hours or days; resolves true to plan anyway.
+// Ask before planning that takes hours or more; resolves true to plan anyway.
 function confirmPlan(planning, options) {
   const total = Object.values(planning).reduce((sum, seconds) => sum + seconds, 0);
   if (total < SLOW_PLAN) return Promise.resolve(true);
   // Levels above 20 also list every level-20 node, which multiplies the lookups.
   const level = planning.mesh >= SLOW_PLAN && options.mesh_level > 20;
-  const dialog = $("#slow-plan");
-  const pace = speed(total);
-  $("h2", dialog).innerHTML = `${icon(pace.icon)}Planning will take ${pace.name}`;
+  const lookups = [planning.streetview != null && "panoramas", planning.mesh != null && "mesh nodes"].filter(Boolean).join(" and ");
+  return confirmSlow("Planning", planning, `Every one of the area's ${lookups} is looked up before the preview appears. ${
+    level ? "Try 3D mesh detail 20 or lower, or a smaller area." : "Try a smaller area."}`, "Preview anyway");
+}
+
+// Ask before a capture that takes days or more; resolves true to start anyway.
+function confirmCapture(preview) {
+  const times = Object.fromEntries(Object.entries(preview.stages).map(([mode, stage]) => [mode, stage.seconds]));
+  if (preview.seconds < SLOW_CAPTURE) return Promise.resolve(true);
+  const slow = Object.keys(times).filter(mode => mode in SHORTER && times[mode] >= SLOW_CAPTURE);
+  const tips = ["a smaller area", ...slow.map(mode => SHORTER[mode])];
+  return confirmSlow("This capture", times, `Downloads can be stopped and resumed later. To shorten it, try ${
+    tips.length > 1 ? `${tips.slice(0, -1).join(", ")} or ${tips.at(-1)}` : tips[0]}.`, "Start anyway");
+}
+
+// Time per source, why it is slow and what helps; resolves true to go ahead.
+function confirmSlow(subject, times, text, anyway) {
+  const dialog = $("#slow");
+  const pace = speed(Object.values(times).reduce((sum, seconds) => sum + seconds, 0));
+  $("h2", dialog).innerHTML = `${icon(pace.icon)}${subject} will take ${pace.name}`;
   $("h2", dialog).classList.toggle("alert", !!pace.alert);
-  $("ul", dialog).innerHTML = Object.entries(planning).map(([mode, seconds]) => {
+  $("ul", dialog).innerHTML = Object.entries(times).map(([mode, seconds]) => {
     const {icon: name, alert} = speed(seconds);
     return `<li>${icon(mode)}<span>${NAMES[mode]}</span>
       <span class="estimate ${alert ? "alert" : ""}">${icon(name)}${speed(seconds).name}</span></li>`;
   }).join("");
-  const lookups = [planning.streetview != null && "panoramas", planning.mesh != null && "mesh nodes"].filter(Boolean).join(" and ");
-  $("p", dialog).textContent = `Every one of the area's ${lookups} is looked up before the preview appears. ${
-    level ? "Try 3D mesh detail 20 or lower, or a smaller area." : "Try a smaller area."}`;
+  $("p", dialog).textContent = text;
+  $("[value=go]", dialog).textContent = anyway;
   dialog.returnValue = "";
   dialog.showModal();
-  return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "plan"), {once: true}));
+  return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "go"), {once: true}));
 }
 
 function showPlan() {
@@ -981,6 +1003,10 @@ function bind() {
     renderPreview();
   });
   $("#start").addEventListener("click", async () => {
+    if (!await confirmCapture(state.preview)) {
+      location.hash = "#/new";
+      return;
+    }
     $("#start").disabled = true;
     try {
       state.job = await api("/api/capture", {plan: state.preview.plan});

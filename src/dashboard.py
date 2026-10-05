@@ -110,6 +110,7 @@ def preview(run):
             stages[mode] = dict(nodes=len(stage["nodes"]), level=stage["level"])
         else:
             stages[mode] = {}
+        stages[mode]["seconds"] = capture.estimate(dict(stages=[stage], options=run["options"]))["seconds"]
     return dict(bounds=area, options=run["options"], seconds=capture.estimate(run)["seconds"], stages=stages,
                 layers=plan_layers(run))
 

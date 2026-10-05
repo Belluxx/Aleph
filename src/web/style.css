@@ -305,7 +305,9 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 }
 .estimate { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--muted); font: 400 11px var(--mono); }
 .estimate .icon { width: 13px; height: 13px; }
-.estimate.alert, dialog h2.alert { color: var(--accent); }
+.estimate.alert, dialog h2.alert, #plan-time.alert { color: var(--accent); }
+#plan-time { display: flex; align-items: center; gap: 8px; }
+#plan-time .icon { width: 26px; height: 26px; }
 .source .fields { display: none; padding: 0 0 14px 23px; }
 .source.on .fields { display: grid; gap: 9px; }
 
