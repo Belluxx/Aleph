@@ -287,6 +287,55 @@ def touching(messages):
     return hit
 
 
+def identity(message):
+    # Geofabrik writes ID first.
+    return varint(message, 1)[0] if message[:1] == b"\x08" else columns(message)[1]
+
+
+def way_item(row, strings, date_gran):
+    return dict(type="way", id=row[1], tags=tags(row, strings), nodes=deltas(row.get(8, b"")),
+                attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
+
+
+def relation_item(row, strings, date_gran):
+    refs = deltas(row.get(9, b""))
+    roles, kinds = unpack(row.get(8, b"")), unpack(row.get(10, b""))
+    if not len(refs) == len(roles) == len(kinds):
+        raise ValueError("Mismatched PBF relation member columns.")
+    if any(kind > 2 for kind in kinds):
+        raise ValueError("Invalid PBF relation member type.")
+    return dict(type="relation", id=row[1], tags=tags(row, strings),
+                members=[(MEMBERS[kind], ref, strings[role]) for kind, ref, role in zip(kinds, refs, roles)],
+                attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
+
+
+def scan_objects(task):
+    """A block's ways or relations: all of them, those with wanted IDs, or highways with a name.
+
+    Also returns the block's object kinds and the ID range of the requested kind.
+    """
+    path, entry, kind, wanted, name = task
+    values, groups = block(path, entry)
+    kinds, items, first, last = 0, [], None, None
+    strings = StringTable(values[1])
+    # Objects can only carry a name present in their block's string table.
+    absent = name is not None and name.encode() not in strings.values
+    wanted = None if wanted is None else set(wanted)
+    for group in groups:
+        for number, message in fields(group):
+            kinds |= 1 << number
+            if number != kind:
+                continue
+            current = identity(message)
+            first, last = current if first is None else first, current
+            if absent or (wanted is not None and current not in wanted):
+                continue
+            item = (way_item if kind == 3 else relation_item)(columns(message), strings, values.get(18, 1000))
+            if name is None or (item["tags"].get("name") == name and item["tags"].get("highway")):
+                items.append(item)
+    return kinds, (first, last), items
+
+
 def scan_ways(task):
     """Select spatial ways or requested member IDs and record the block's ID range."""
     path, entry, xml, wanted = task
@@ -295,10 +344,6 @@ def scan_ways(task):
     if not messages:
         raise ValueError("PBF way block contains no ways.")
 
-    def identity(message):
-        # Geofabrik writes ID first.
-        return varint(message, 1)[0] if message[:1] == b"\x08" else columns(message)[1]
-
     if wanted is not None:
         chosen = [message for message in messages if identity(message) in wanted]
     else:
@@ -306,13 +351,10 @@ def scan_ways(task):
     selected, identities, nodes = [], array("q"), set()
     strings = StringTable(values[1]) if chosen else None
     for message in chosen:
-        row = columns(message)
-        refs = deltas(row.get(8, b""))
-        item = dict(type="way", id=row[1], nodes=refs, tags=tags(row, strings),
-                    attrs=info(dict(fields(row.get(4, b""))), strings, values.get(18, 1000)))
+        item = way_item(columns(message), strings, values.get(18, 1000))
         if xml:
-            identities.append(row[1])
-            nodes.update(refs)
+            identities.append(item["id"])
+            nodes.update(item["nodes"])
             selected.append(xml_object(item))
         else:
             selected.append(item)
@@ -496,6 +538,7 @@ class PBF:
         self.selected_ways = {}
         self.selected_relations = {}
         self.selected_coordinates = {}
+        self.spans = {}  # Block offset → first and last way or relation ID.
         self.timestamp = None
         seen_header = False
         with self.path.open("rb") as stream:
@@ -554,59 +597,47 @@ class PBF:
                 future.cancel()
             pool.shutdown(wait=True, cancel_futures=True)
 
-    def raw(self, kinds, wanted=None):
-        if wanted is not None and not wanted:
-            return
+    def objects(self, kind, wanted=None, name=None):
+        """Ways (3) or relations (4) in file order, decoded in parallel; see scan_objects."""
+        if wanted is not None:
+            if not wanted:
+                return
+            wanted = sorted(wanted)
+        tasks = []
         for entry in self.entries:
-            self.cancel()
-            if entry[2] and not any(entry[2] & (1 << k) for k in kinds):
+            if entry[2] and not entry[2] & 1 << kind:
                 continue
-            values, groups = block(self.path, entry)
-            strings = None
-            for group in groups:
-                for kind, message in fields(group):
-                    entry[2] |= 1 << kind
-                    if kind not in kinds:
-                        continue
-                    # Geofabrik writes ID first. Skip other fields for unselected objects.
-                    if wanted is not None and message[:1] == b"\x08" and varint(message, 1)[0] not in wanted:
-                        continue
-                    row = columns(message)
-                    if wanted is not None and row[1] not in wanted:
-                        continue
-                    if strings is None:
-                        strings = StringTable(values[1])
-                    yield kind, row, strings, values.get(18, 1000)
+            ids = wanted
+            if wanted is not None and entry[0] in self.spans:
+                # Blocks are sorted by ID, so send each only the IDs within its range.
+                first, last = self.spans[entry[0]]
+                ids = wanted[bisect.bisect_left(wanted, first):bisect.bisect_right(wanted, last)]
+                if not ids:
+                    continue
+            tasks.append((entry, (self.path, entry, kind, None if ids is None else array("q", ids), name)))
+        results = self.parallel(scan_objects, (task for _, task in tasks))
+        for (entry, _), (kinds, span, items) in zip(tasks, results):
+            entry[2] |= kinds
+            if span[0] is not None:
+                self.spans[entry[0]] = span
+            yield from items
 
     def ways(self, wanted=None, name=None):
         if wanted is not None and wanted <= self.selected_ways.keys():
             for identity in sorted(wanted):
                 yield self.selected_ways[identity]
             return
-        for _, row, strings, date_gran in self.raw((3,), wanted):
-            properties = tags(row, strings)
-            if name is not None and (properties.get("name") != name or not properties.get("highway")):
-                continue
-            way = dict(type="way", id=row[1], tags=properties,
-                       nodes=deltas(row.get(8, b"")),
-                       attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
+        for way in self.objects(3, wanted, name):
             if wanted is not None or name is not None:
                 self.selected_ways[way["id"]] = way
             yield way
 
     def relations(self, wanted=None):
-        rows = ((4, *self.selected_relations[i]) for i in sorted(wanted)) if (
-            wanted is not None and wanted <= self.selected_relations.keys()) else self.raw((4,), wanted)
-        for _, row, strings, date_gran in rows:
-            refs = deltas(row.get(9, b""))
-            roles, kinds = unpack(row.get(8, b"")), unpack(row.get(10, b""))
-            if not len(refs) == len(roles) == len(kinds):
-                raise ValueError("Mismatched PBF relation member columns.")
-            if any(kind > 2 for kind in kinds):
-                raise ValueError("Invalid PBF relation member type.")
-            yield dict(type="relation", id=row[1], tags=tags(row, strings),
-                       members=[(MEMBERS[kind], ref, strings[role]) for kind, ref, role in zip(kinds, refs, roles)],
-                       attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
+        if wanted is not None and wanted <= self.selected_relations.keys():
+            for identity in sorted(wanted):
+                yield self.selected_relations[identity]
+            return
+        yield from self.objects(4, wanted)
 
     def select(self, area, xml=False):
         self.way_xml = {}
@@ -629,6 +660,7 @@ class PBF:
         way_blocks = []
         results = self.parallel(scan_ways, tasks, spatial_nodes, (array("q", spatial),))
         for entry, (bounds, selected) in zip(entries, results, strict=True):
+            self.spans[entry[0]] = bounds
             if xml:
                 identities, refs, chunk = selected
                 ways.update(identities)
@@ -642,24 +674,22 @@ class PBF:
                 self.selected_ways[way["id"]] = way
         parents, pending = defaultdict(list), []
         rows, extra_ways = {}, set()
-        for _, row, strings, date_gran in self.raw((4,)):
-            identity = row[1]
-            rows[identity] = row, strings, date_gran
-            refs = deltas(row.get(9, b""))
-            kinds = unpack(row.get(10, b""))
+        for relation in self.relations():
+            identity = relation["id"]
+            rows[identity] = relation
             matched = False
-            for kind, ref in zip(kinds, refs):
-                if kind == 2:
+            for kind, ref, _ in relation["members"]:
+                if kind == "relation":
                     parents[ref].append(identity)
-                elif ref in (spatial if kind == 0 else ways):
+                elif ref in (spatial if kind == "node" else ways):
                     matched = True
             if matched:
                 pending.append(identity)
-                if xml and tags(row, strings).get("type") == "multipolygon":
-                    for kind, ref in zip(kinds, refs):
-                        if kind == 0:
+                if xml and relation["tags"].get("type") == "multipolygon":
+                    for kind, ref, _ in relation["members"]:
+                        if kind == "node":
                             nodes.add(ref)
-                        elif kind == 1:
+                        elif kind == "way":
                             extra_ways.add(ref)
         while pending:
             identity = pending.pop()
