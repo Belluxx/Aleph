@@ -70,7 +70,7 @@ def coverage(client, area, progress, workers):
     addresses = (url("https://www.google.com/maps/photometa/ac/v1",
                      pb=f"!1m1!1smaps_sv.tactile!6m3!1i{tile['x']}!2i{tile['y']}!3i17!8b1")
                  for tile in tiles(coverage_grid))
-    for i, data in enumerate(fetch(client, addresses, workers), 1):
+    for i, data in enumerate(fetch(client, addresses, workers, check=parse_coverage), 1):
         for view in parse_coverage(data):
             found[view["pano_id"]] = view
         progress("Finding panoramas", i, count)
@@ -117,7 +117,11 @@ def metadata_url(pano_id):
 
 def fetch_metadata(client, sample, *, full_sphere=False):
     """Refuse a panorama whose identity or position changed since it was found."""
-    metadata = parse_metadata(client.get(metadata_url(sample["pano_id"])), full_sphere=full_sphere)
+    def parse(data):
+        return parse_metadata(data, full_sphere=full_sphere)
+
+    # Google occasionally answers with a malformed response; checking it inside get retries it.
+    metadata = parse(client.get(metadata_url(sample["pano_id"]), check=parse))
     if metadata["pano_id"] != sample["pano_id"] or (
             "lat" in sample and distance((sample["lat"], sample["lon"]), (metadata["lat"], metadata["lon"])) > 1):
         raise ValueError("The panorama identity or position changed. Plan again or rerun with --refresh.")

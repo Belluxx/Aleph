@@ -119,7 +119,8 @@ class Client:
             self.cancel()
 
     def get(self, address, *, missing_ok=False, timeout=60, user_agent=BROWSER_AGENT,
-            destination=None, progress=None):
+            destination=None, progress=None, check=None):
+        """Retry failed requests; check raises ValueError on a malformed response to retry it too."""
         for attempt in range(4):
             backoff = 2 ** (attempt - 1) if attempt else 0
             until = time.monotonic() + max(backoff, self.delay - (time.monotonic() - self.finished))
@@ -147,8 +148,12 @@ class Client:
                                 raise OSError("Incomplete download; retrying.")
                             self.check_cancel()
                         result = Path(destination)
+                if check:
+                    check(result)
                 self.check_cancel()
                 return result
+            except MissingImagery:
+                raise
             except Exception as error:
                 if self.request_log:
                     self.request_log("GET", address, attempt, error)
@@ -187,11 +192,11 @@ class CachedClient(Client):
         return result
 
 
-def fetch(client, addresses, workers, *, missing_ok=False):
+def fetch(client, addresses, workers, *, missing_ok=False, check=None):
     """Yield responses in order with up to workers requests in flight; with missing_ok, None marks missing data."""
     def get(address):
         try:
-            return client.get(address, missing_ok=missing_ok)
+            return client.get(address, missing_ok=missing_ok, check=check)
         except MissingImagery:
             return None
 

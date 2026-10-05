@@ -67,6 +67,19 @@ class DownloadTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b"previous snapshot")
             self.assertEqual(list(Path(directory).iterdir()), [target])
 
+    def test_malformed_response_is_retried_until_it_checks_out(self):
+        def check(data):
+            if data != b"good":
+                raise ValueError("Unreadable response.")
+
+        with (
+            patch("src.common.urlopen", side_effect=[response(b"garbage", 7), response(b"good", 4)]) as get,
+            patch("src.common.time.sleep"),
+            patch("src.common.time.monotonic", side_effect=count(step=10)),
+        ):
+            self.assertEqual(Client().get("https://example.test/meta", check=check), b"good")
+        self.assertEqual(get.call_count, 2)
+
     def test_containment_rejects_traversal_and_symlink_escape(self):
         with TemporaryDirectory() as directory:
             root = Path(directory) / "capture"
