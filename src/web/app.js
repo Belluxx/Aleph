@@ -174,9 +174,15 @@ function tint(layer) {
 async function basemap() {
   try {
     const style = await (await fetch(BASEMAP)).json();
-    // Shields and icons would bring color back; keep the map to paper and ink.
-    style.layers = style.layers.filter(layer => !(layer.type === "symbol" && layer.layout?.["icon-image"]));
+    // Place names share layers with dot icons; preserve their text when removing icons.
+    style.layers = style.layers.filter(layer => layer.type !== "symbol" || !layer.layout?.["icon-image"]
+      || layer["source-layer"] === "place");
     for (const layer of style.layers) {
+      if (layer.type === "symbol" && layer["source-layer"] === "place") {
+        for (const properties of [layer.layout, layer.paint]) {
+          for (const key of Object.keys(properties || {})) if (key.startsWith("icon-")) delete properties[key];
+        }
+      }
       themed.set(layer.id, tint(layer));
       layer.paint = {...layer.paint, ...resolve(tint(layer))};
     }
