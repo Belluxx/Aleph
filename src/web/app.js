@@ -445,10 +445,28 @@ function tilt(on) {
   if (on === map.dragRotate.isEnabled()) return;
   for (const handler of [map.dragRotate, map.touchPitch]) on ? handler.enable() : handler.disable();
   for (const handler of [map.touchZoomRotate, map.keyboard]) on ? handler.enableRotation() : handler.disableRotation();
+  on ? map.boxZoom.disable() : map.boxZoom.enable();  // Shift + drag orbits instead.
   map.removeControl(navigation);
-  navigation = new maplibregl.NavigationControl({showCompass: on, visualizePitch: true});
+  navigation = new maplibregl.NavigationControl({showCompass: on});  // Its click turns north and keeps the tilt.
   map.addControl(navigation, "top-right");
-  map.easeTo(on ? {pitch: PITCH} : {pitch: 0, bearing: 0});
+  hint(on ? "Shift + drag to rotate and tilt" : "");
+  // Easing at once would stop a move in progress, such as the fit to a capture just opened, halfway.
+  const ease = () => map.easeTo(on ? {pitch: PITCH} : {pitch: 0, bearing: 0});
+  map.isMoving() ? map.once("moveend", ease) : ease();
+}
+
+// Shift + drag rotates and tilts as in Google Earth, at the speeds of MapLibre's right-drag.
+function startOrbit(event) {
+  const {shiftKey, button, clientX, clientY} = event.originalEvent;
+  if (!shiftKey || button !== 0 || !map.dragRotate.isEnabled()) return;
+  event.preventDefault();  // Keeps the map from panning.
+  let last = [clientX, clientY];
+  const move = ({clientX: x, clientY: y}) => {
+    map.jumpTo({bearing: map.getBearing() + (x - last[0]) * 0.8, pitch: map.getPitch() - (y - last[1]) * 0.5});
+    last = [x, y];
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", () => window.removeEventListener("mousemove", move), {once: true});
 }
 
 async function setSolid(kind, on) {
@@ -521,9 +539,14 @@ function cornerAt(pixel) {
   return {index, anchor: {lng, lat}};
 }
 
+function hint(text) {
+  $("#hint").textContent = text;
+  $("#hint").hidden = !text;
+}
+
 function setDrawing(on) {
   state.drawing = on;
-  $("#hint").hidden = !on;
+  hint(on ? "Drag to draw the capture area · Esc to pan instead" : "");
   map.getCanvas().style.cursor = on ? "crosshair" : "";
   renderArea();
   syncMap();
@@ -1247,6 +1270,7 @@ function bind() {
 
 function bindMap() {
   map.on("mousedown", startDrag);
+  map.on("mousedown", startOrbit);
   map.on("mousemove", moveDrag);
   map.on("mouseup", endDrag);
   map.on("click", "photos", event => {
@@ -1285,7 +1309,8 @@ async function init() {
 
   const view = store.get("view", {center: [12.49, 41.89], zoom: 2});
   map = new maplibregl.Map({container: "map", style: await basemap(), center: view.center, zoom: view.zoom,
-                            attributionControl: {compact: true}, dragRotate: false, touchPitch: false});
+                            attributionControl: {compact: true}, dragRotate: false, touchPitch: false,
+                            maxPitch: 80});  // 3D views tilt past MapLibre's 60°, toward Google Earth's low views.
   map.touchZoomRotate.disableRotation();
   map.keyboard.disableRotation();
   navigation = new maplibregl.NavigationControl({showCompass: false});
