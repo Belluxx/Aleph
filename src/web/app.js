@@ -394,10 +394,35 @@ function loadThree() {
   return three;
 }
 
+// Firefox fails to decode many textures when thousands start at once, which leaves them white; a few at a time all load.
+function throttle(loader, limit = 8) {
+  const load = loader.load.bind(loader), waiting = [];
+  let active = 0;
+  const next = () => {
+    if (active >= limit || !waiting.length) return;
+    active++;
+    const [url, onLoad, onProgress, onError] = waiting.shift();
+    const settle = callback => value => {
+      active--;
+      next();
+      callback?.(value);
+    };
+    load(url, settle(onLoad), onProgress, settle(onError));
+  };
+  loader.load = (...args) => {
+    waiting.push(args);
+    next();
+  };
+}
+
 // A custom layer drawing mesh.glb, in meters east (x), up (y) and south (z) of the capture's center.
 async function meshLayer(capture) {
   const [THREE, {GLTFLoader}] = await loadThree();
-  const {scene} = await new GLTFLoader().loadAsync(absolute(capturePath(capture.id, "/files/mesh.glb")));
+  const loader = new GLTFLoader().register(parser => {
+    throttle(parser.textureLoader);
+    return {name: "throttle"};
+  });
+  const {scene} = await loader.loadAsync(absolute(capturePath(capture.id, "/files/mesh.glb")));
   // Rest the ground along its edges on the flat map, where they meet: the lowest point at y = 0 can be a pit,
   // such as an arena floor or an underpass. A low share of edge heights skips roofs cut by the edges.
   const box = new THREE.Box3().setFromObject(scene), edges = [];
