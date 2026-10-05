@@ -124,7 +124,7 @@ const state = {
   captures: [],
   job: null,
   view: null,
-  area: store.get("area", null),
+  area: null,
   drawing: false,
   drag: null,
   preview: null,
@@ -145,6 +145,9 @@ const state = {
 
 let map;
 let basemapLayers = [];
+// Raster source and layer ids per mode, oldest first; a refresh loads on top until it replaces the older one.
+const rasters = {satellite: [], terrain: []};
+let rasterCount = 0;
 const themed = new Map();  // Layer id → paint with CSS variable names, resolved per color scheme.
 
 // Map styling
@@ -248,7 +251,7 @@ const GROUPS = {
   photos: ["photos", "selected", "selected-view"],
   route: ["route-paths", "route-stops"],
   satellite: ["satellite"],
-  terrain: ["hillshade"],
+  terrain: ["terrain"],
   buildings: ["osm-buildings", "osm-building-lines"],
   roads: ["osm-roads", "osm-paths"],
   water: ["osm-land", "osm-water", "osm-waterways"],
@@ -295,8 +298,9 @@ function visibleLayers() {
 function syncMap() {
   if (!map?.getLayer("corners")) return;
   const on = visibleLayers();
-  for (const id of [...OVERLAYS.map(layer => layer.id), "satellite", "hillshade"]) {
-    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on.has(id) ? "visible" : "none");
+  for (const layer of OVERLAYS) map.setLayoutProperty(layer.id, "visibility", on.has(layer.id) ? "visible" : "none");
+  for (const [mode, ids] of Object.entries(rasters)) {
+    for (const id of ids) map.setLayoutProperty(id, "visibility", on.has(mode) ? "visible" : "none");
   }
   const base = state.view !== "capture" || state.toggles.basemap;
   for (const id of basemapLayers) {
@@ -309,30 +313,41 @@ function setData(source, data) {
 }
 
 // Rasters are added once a capture has saved tiles; their URLs carry the saved count.
+// Each refresh gets its own source: reloading tiles in place blanks areas that were still missing.
 function setRaster(mode, info) {
+  const ids = rasters[mode];
+  if (ids.length > 1) removeRaster(ids.pop());  // A refresh still loading is superseded.
+  const id = `raster-${mode}-${++rasterCount}`;
   const path = mode === "terrain" ? "hillshade" : mode;
-  const tiles = [absolute(capturePath(state.capture.id, `/${path}/{z}/{x}/{y}?v=${info.done}`))];
-  const source = map.getSource(mode);
-  if (source) return source.setTiles(tiles);
   const [s, w, n, e] = state.capture.bounds;
-  const spec = {tiles, bounds: [w, s, e, n], minzoom: info.minzoom, maxzoom: info.zoom};
-  if (mode === "satellite") {
-    map.addSource(mode, {type: "raster", tileSize: 256, ...spec});
-    addLayer({id: "satellite", type: "raster", source: mode, paint: {"raster-fade-duration": 0}}, "osm-land");
-  } else {
-    // The server shades terrain itself, so tiles stay transparent where heights are missing.
-    map.addSource(mode, {type: "raster", tileSize: 512, ...spec});
-    addLayer({id: "hillshade", type: "raster", source: mode, paint: {"raster-fade-duration": 0}}, "osm-land");
-  }
+  // The server shades terrain itself, so hillshade tiles stay transparent where heights are missing.
+  map.addSource(id, {type: "raster", tileSize: mode === "satellite" ? 256 : 512, bounds: [w, s, e, n],
+                     minzoom: info.minzoom, maxzoom: info.zoom,
+                     tiles: [absolute(capturePath(state.capture.id, `/${path}/{z}/{x}/{y}?v=${info.done}`))]});
+  // Hillshade stays above the imagery.
+  addLayer({id, type: "raster", source: id, paint: {"raster-fade-duration": 0}},
+           mode === "satellite" && rasters.terrain[0] || "osm-land");
+  ids.push(id);
   syncMap();
 }
 
-function clearCaptureLayers() {
-  for (const [layer, source] of [["satellite", "satellite"], ["hillshade", "terrain"]]) {
-    if (map.getLayer(layer)) map.removeLayer(layer);
-    if (map.getSource(source)) map.removeSource(source);
-    themed.delete(layer);
+function removeRaster(id) {
+  map.removeLayer(id);
+  map.removeSource(id);
+  themed.delete(id);
+}
+
+// Drop older rasters once the newest has loaded every tile in view.
+function swapRasters(event) {
+  for (const ids of Object.values(rasters)) {
+    const newest = ids.at(-1);
+    if (ids.length < 2 || (event.type === "sourcedata" && event.sourceId !== newest) || !map.isSourceLoaded(newest)) continue;
+    ids.splice(0, ids.length - 1).forEach(removeRaster);
   }
+}
+
+function clearCaptureLayers() {
+  for (const ids of Object.values(rasters)) ids.splice(0).forEach(removeRaster);
   for (const source of ["osm", "photos", "selected", "bounds", "plan"]) setData(source, EMPTY);
   Object.assign(state, {photos: [], photoCount: 0, photoAgain: false, live: {}, selected: null});
   $("#viewer").hidden = true;
@@ -399,7 +414,6 @@ function endDrag() {
     setArea(previous);  // A click, not a drag.
     return;
   }
-  store.set("area", state.area);
   setDrawing(false);
   estimate();
 }
@@ -864,6 +878,8 @@ function show(view) {
 function route() {
   const [, view, id] = (location.hash.slice(1) || "/").split("/");
   if (view === "new") {
+    // A new capture starts from a fresh area; only returning from its preview keeps it.
+    if (state.view !== "new" && state.view !== "preview") setArea(null);
     show("new");
     renderArea();
     estimate();
@@ -1030,9 +1046,12 @@ function bindMap() {
     map.on("mouseleave", layer, () => { if (!state.drawing) map.getCanvas().style.cursor = ""; });
   }
   map.on("moveend", () => store.set("view", {center: map.getCenter().toArray(), zoom: map.getZoom()}));
+  // Tile events show the newest raster requested its tiles; idle covers tiles that were all missing.
+  map.on("sourcedata", event => { if (event.tile) swapRasters(event); });
+  map.on("idle", swapRasters);
   map.on("error", event => {
     // Tiles not saved yet are expected while a capture runs.
-    if (event.sourceId === "satellite" || event.sourceId === "terrain") return;
+    if (event.sourceId?.startsWith("raster-")) return;
     console.warn(event.error);
   });
 }
