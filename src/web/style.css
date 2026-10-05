@@ -191,6 +191,9 @@ input[type=number], input[type=search] {
 }
 input[type=number]:hover, input[type=search]:hover { border-color: var(--muted); }
 input[type=number]:focus, input[type=search]:focus { border-color: var(--ink); outline: none; }
+input[type=number] { appearance: textfield; -moz-appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
 input[type=checkbox] {
   appearance: none;

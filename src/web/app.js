@@ -8,6 +8,9 @@ const STATES = {planned: "Planned", running: "Capturing", interrupted: "Interrup
 const NUMBERS = ["step", "fov", "sphere_zoom", "satellite_zoom", "terrain_zoom", "mesh_level", "delay",
                  "streetview_workers", "satellite_workers", "terrain_workers", "mesh_workers"];
 const EARTH = 6371008.8;
+const numberFormat = new Intl.NumberFormat("en-US", {notation: "compact", maximumFractionDigits: 0});
+const number = value => numberFormat.format(Math.round(value));
+
 // Level names shown under slider knobs.
 const SCALES = {
   satellite_zoom: {12: "City", 13: "Town", 14: "District", 15: "Blocks", 16: "Buildings", 17: "Roofs", 18: "Cars",
@@ -16,7 +19,7 @@ const SCALES = {
   mesh_level: {14: "Hills", 15: "Districts", 16: "Blocks", 17: "Buildings", 18: "Roofs", 19: "Windows", 20: "Cars",
                21: "Details", 22: "Finest"},
   sphere_zoom: Object.fromEntries(["Thumbnail", "Low", "Medium", "High", "Very high", "Maximum"]
-    .map((name, z) => [z, `${name} · ${(512 * 2 ** z).toLocaleString("en-US")} px`])),
+    .map((name, z) => [z, `${name} (${number(512 * 2 ** z)} px)`])),
 };
 const ICONS = {
   streetview: '<path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/>',
@@ -37,7 +40,6 @@ const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tile
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-const number = value => Math.round(value).toLocaleString("en-US");
 const plural = (count, one, many = `${one}s`) => `${number(count)} ${count === 1 ? one : many}`;
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -63,13 +65,24 @@ async function api(path, body) {
 }
 
 function duration(seconds) {
-  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
+  seconds = Math.max(1, Math.round(seconds));
+  if (seconds < 60) return `${seconds} s`;
   const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes >= 1440) {
+    const days = numberFormat.format(minutes / 1440);
+    return `${days} ${days === "1" ? "day" : "days"}`;
+  }
+  const hours = Math.floor(minutes / 60), remainder = minutes % 60;
+  return `${hours} h${remainder ? ` ${remainder} min` : ""}`;
 }
 
 const meters = m => m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m)} m`;
 const resolution = m => `${m < 1 ? m.toFixed(2) : m.toFixed(1)} m/px`;
+function megapixels(width, height) {
+  const total = width * height / 1e6;
+  return `${total < 1 ? total.toLocaleString("en-US", {maximumSignificantDigits: 2}) : number(total)} MP`;
+}
 const megabytes = bytes => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB`
   : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 
@@ -457,10 +470,10 @@ function estimate() {
     }
     if (count !== estimateCount) return;
     const {satellite, terrain} = result;
-    outputs.satellite.textContent = satellite ? `${plural(satellite.tiles, "tile")} · ~${duration(satellite.seconds)}` : "";
+    outputs.satellite.textContent = satellite ? `${plural(satellite.tiles, "tile")} (~${duration(satellite.seconds)})` : "";
     details.satellite.textContent = satellite
-      ? `${resolution(satellite.meters_per_pixel)} · ${number(satellite.width)} × ${number(satellite.height)} px` : "";
-    outputs.terrain.textContent = terrain ? `${plural(terrain.tiles, "tile")} · ~${duration(terrain.seconds)}` : "";
+      ? `${resolution(satellite.meters_per_pixel)} (${megapixels(satellite.width, satellite.height)})` : "";
+    outputs.terrain.textContent = terrain ? `${plural(terrain.tiles, "tile")} (~${duration(terrain.seconds)})` : "";
     details.terrain.textContent = terrain ? `${resolution(terrain.meters_per_pixel)} elevation` : "";
   }, 120);
 }
@@ -547,7 +560,7 @@ const stageRows = {
   streetview: s => [plural(s.photos, s.sphere ? "sphere" : "photo"), !s.meters ? "No mapped roads at this depth"
     : !s.stops ? "No panoramas on the selected roads"
     : `${plural(s.stops, "stop")} along ${meters(s.meters)} of road` + (s.gaps ? ` · ${plural(s.gaps, "spacing gap")}` : "")],
-  satellite: s => [plural(s.tiles, "tile"), `${number(s.width)} × ${number(s.height)} px · ${resolution(s.meters_per_pixel)}`],
+  satellite: s => [plural(s.tiles, "tile"), `${resolution(s.meters_per_pixel)} (${megapixels(s.width, s.height)})`],
   osm: () => ["1 extract", "Clipped from a Geofabrik regional file"],
   terrain: s => [plural(s.tiles, "tile"), `Zoom ${s.zoom} · ${resolution(s.meters_per_pixel)}`],
   mesh: s => [plural(s.nodes, "node"), `Detail level ${s.level}`],
