@@ -11,13 +11,12 @@ import json
 import math
 import shutil
 import struct
-import sys
 import tempfile
-from array import array
-from itertools import accumulate
+
+import numpy as np
 
 from .common import atomic_path, fetch
-from .pbf import fields, unpack
+from .pbf import fields, varints
 
 BASE = "https://kh.google.com/rt/earth/"
 LEAF, NODATA, USE_IMAGERY_EPOCH = 4, 8, 16
@@ -25,7 +24,6 @@ JPEG = 1
 LOWEST, HIGHEST = -1000, 9000  # Heights searched for nodes, in meters from the sphere.
 GLB_LIMIT = 2**32
 TILES_PER_MESH = 64  # Unreal's Nanite allows 64 materials per mesh; Godot allows 256 surfaces.
-BITS = [bytes((byte >> i) & 1 for i in range(8)) for byte in range(256)]
 
 
 def first(data):
@@ -175,22 +173,17 @@ def check(data):
         raise ValueError("Unexpected 3D mesh node data.")
 
 
-def words(low, high):
-    """Little-endian 16-bit values from separate low and high byte planes."""
-    joined = bytearray(2 * len(low))
-    joined[0::2], joined[1::2] = low, high
-    values = array("H", joined)
-    if sys.byteorder != "little":
-        values.byteswap()
-    return values
-
-
 def counted(data, name):
     """Packed integers preceded by their count."""
-    values = unpack(data)
-    if not values or len(values) != values[0] + 1:
+    values = varints(data).astype(np.int64)
+    if not values.size or values.size != values[0] + 1:
         raise ValueError(f"Unexpected 3D mesh {name}.")
     return values[1:]
+
+
+def fitted(values, size):
+    """Truncate or zero-pad to size."""
+    return np.pad(values[:size], (0, max(0, size - len(values))))
 
 
 def decode(data, mask, axes, radius, inside):
@@ -227,48 +220,49 @@ def decode(data, mask, axes, radius, inside):
         if 1 not in texture or texture.get(2, JPEG) != JPEG:
             raise ValueError("Unexpected 3D mesh texture.")
 
-        xs, ys, zs = ([v & 255 for v in accumulate(vertices[i * count:(i + 1) * count])] for i in range(3))
-        east = [a0 * x + a1 * y + a2 * z + at for x, y, z in zip(xs, ys, zs)]
-        north = [b0 * x + b1 * y + b2 * z + bt for x, y, z in zip(xs, ys, zs)]
-        up = [c0 * x + c1 * y + c2 * z + ct for x, y, z in zip(xs, ys, zs)]
+        xs, ys, zs = np.cumsum(np.frombuffer(vertices, np.uint8).reshape(3, count), axis=1, dtype=np.uint8).astype(float)
+        east = a0 * xs + a1 * ys + a2 * zs + at
+        north = b0 * xs + b1 * ys + b2 * zs + bt
+        up = c0 * xs + c1 * ys + c2 * zs + ct
         u_mod, v_mod = 1 + uv[0] + (uv[1] << 8), 1 + uv[2] + (uv[3] << 8)
-        planes = [uv[4 + i * count:4 + (i + 1) * count] for i in range(4)]
+        # Four byte planes: low u, low v, high u, high v.
+        planes = np.frombuffer(uv, np.uint8, offset=4).reshape(4, count).astype(np.int64)
         if len(offsets) == 16:
             u_offset, v_offset, u_scale, v_scale = struct.unpack("<4f", offsets)
         else:
             u_offset, v_offset, u_scale, v_scale = 0.5, 0.5, 1 / u_mod, 1 / v_mod
-        us = [(u % u_mod + u_offset) * u_scale for u in accumulate(words(planes[0], planes[2]))]
-        vs = [(v % v_mod + v_offset) * v_scale for v in accumulate(words(planes[1], planes[3]))]
+        us = (np.cumsum(planes[0] | planes[2] << 8) % u_mod + u_offset) * u_scale
+        vs = (np.cumsum(planes[1] | planes[3] << 8) % v_mod + v_offset) * v_scale
 
         # A zero index adds the next new vertex; others count back from the newest.
-        strip, zeros = [], 0
-        for value in counted(mesh.get(3, b""), "indices"):
-            strip.append(zeros - value)
-            if not value:
-                zeros += 1
-        if zeros > count or (strip and min(strip) < 0):
+        values = counted(mesh.get(3, b""), "indices")
+        new = values == 0
+        strip = np.cumsum(new) - new - values
+        if new.sum() > count or (strip.size and strip.min() < 0):
             raise ValueError("Unexpected 3D mesh indices.")
         # Runs cycle through eight octants per layer; trailing positions belong to no drawn layer.
         runs = counted(mesh.get(8, b""), "octants")
-        keep = b"".join((b"\1" if j < 24 and not mask >> (j & 7) & 1 else b"\0") * size
-                        for j, size in enumerate(runs)).ljust(len(strip), b"\0")
-        skirts = b"".join(BITS[byte] for byte in mesh.get(13, b"")).ljust(len(strip), b"\0")
-        triangles = []
-        for t in range(len(strip) - 2):
-            if not keep[t + 2] or skirts[t]:
-                continue
-            a, b, c = strip[t], strip[t + 1], strip[t + 2]
-            if a != b != c != a and inside((east[a] + east[b] + east[c]) / 3, (north[a] + north[b] + north[c]) / 3,
-                                           (up[a] + up[b] + up[c]) / 3):
-                triangles += (a, c, b) if t & 1 else (a, b, c)
-        if not triangles:
+        layers = np.arange(runs.size)
+        keep = fitted(np.repeat((layers < 24) & ~(mask >> (layers & 7) & 1).astype(bool), runs), strip.size)
+        skirts = fitted(np.unpackbits(np.frombuffer(mesh.get(13, b""), np.uint8), bitorder="little"), strip.size)
+        a, b, c = strip[:-2], strip[1:-1], strip[2:]
+        drawn = (keep[2:].astype(bool) & ~skirts[:-2].astype(bool) & (a != b) & (b != c) & (c != a)
+                 & inside((east[a] + east[b] + east[c]) / 3, (north[a] + north[b] + north[c]) / 3,
+                          (up[a] + up[b] + up[c]) / 3))
+        # Odd triangles in a strip are wound the other way.
+        odd = np.arange(a.size) % 2 == 1
+        triangles = np.stack((a, np.where(odd, c, b), np.where(odd, b, c)), axis=1)[drawn].ravel()
+        if not triangles.size:
             continue
-        used = list(dict.fromkeys(triangles))
-        index = {v: i for i, v in enumerate(used)}
+        # Vertices in order of first use.
+        unique, first_use = np.unique(triangles, return_index=True)
+        used = unique[np.argsort(first_use)]
+        index = np.empty(count, np.int64)
+        index[used] = np.arange(used.size)
         # glTF is Y-up: x east, y up, z south.
-        positions = array("f", [value for v in used for value in (east[v], up[v], -north[v])])
-        texcoords = array("f", [value for v in used for value in (us[v], vs[v])])
-        indices = array("H" if len(used) <= 65536 else "I", [index[v] for v in triangles])
+        positions = np.stack((east[used], up[used], -north[used]), axis=1).astype(np.float32)
+        texcoords = np.stack((us[used], vs[used]), axis=1).astype(np.float32)
+        indices = index[triangles].astype(np.uint16 if used.size <= 65536 else np.uint32)
         yield positions, texcoords, indices, texture[1]
 
 
@@ -282,8 +276,9 @@ def crop(area, axes, radius):
     def inside(e, n, u):
         r = radius + u
         x, y, z = ex * e + nx * n + ux * r, ey * e + ny * n + uy * r, ez * e + nz * n + uz * r
-        length = math.sqrt(x * x + y * y + z * z)
-        return low * length <= z <= high * length and x * west_x + y * west_y >= 0 >= x * east_x + y * east_y
+        length = np.sqrt(x * x + y * y + z * z)
+        return ((low * length <= z) & (z <= high * length)
+                & (x * west_x + y * west_y >= 0) & (x * east_x + y * east_y <= 0))
 
     return inside
 
@@ -311,10 +306,8 @@ def export(path, folder, stage, area, progress):
     progress("Building mesh.glb", 0, len(saved))
     with tempfile.TemporaryFile(dir=folder) as spool:
         def view(data, target=None):
-            if sys.byteorder != "little" and isinstance(data, array):
-                data = array(data.typecode, data)
-                data.byteswap()
-            data = bytes(data)
+            if isinstance(data, np.ndarray):
+                data = data.astype(data.dtype.newbyteorder("<")).tobytes()
             gltf["bufferViews"].append(dict(buffer=0, byteOffset=spool.tell(), byteLength=len(data),
                                             **({"target": target} if target else {})))
             spool.write(data + b"\0" * (-len(data) % 4))
@@ -331,12 +324,11 @@ def export(path, folder, stage, area, progress):
                 i, k = len(gltf["materials"]), len(gltf["accessors"])
                 name = node[0] if not part else f"{node[0]}-{part}"
                 gltf["accessors"] += [
-                    dict(bufferView=view(positions, 34962), componentType=5126, count=len(positions) // 3,
-                         type="VEC3", min=[min(positions[j::3]) for j in range(3)],
-                         max=[max(positions[j::3]) for j in range(3)]),
-                    dict(bufferView=view(texcoords, 34962), componentType=5126, count=len(texcoords) // 2,
+                    dict(bufferView=view(positions, 34962), componentType=5126, count=len(positions),
+                         type="VEC3", min=positions.min(axis=0).tolist(), max=positions.max(axis=0).tolist()),
+                    dict(bufferView=view(texcoords, 34962), componentType=5126, count=len(texcoords),
                          type="VEC2"),
-                    dict(bufferView=view(indices, 34963), componentType=5123 if indices.typecode == "H" else 5125,
+                    dict(bufferView=view(indices, 34963), componentType=5123 if indices.dtype == np.uint16 else 5125,
                          count=len(indices), type="SCALAR"),
                 ]
                 gltf["images"].append(dict(bufferView=view(jpeg), mimeType="image/jpeg"))
@@ -361,15 +353,12 @@ def export(path, folder, stage, area, progress):
         for accessor in positions:
             span = gltf["bufferViews"][accessor["bufferView"]]
             spool.seek(span["byteOffset"])
-            values = array("f", spool.read(span["byteLength"]))
-            if sys.byteorder != "little":
-                values.byteswap()
-            values[1::3] = array("f", [y - base for y in values[1::3]])
-            accessor["min"][1], accessor["max"][1] = min(values[1::3]), max(values[1::3])
-            if sys.byteorder != "little":
-                values.byteswap()
+            values = np.frombuffer(spool.read(span["byteLength"]), "<f4").reshape(-1, 3).copy()
+            # Subtract in double precision, then round once to float32.
+            values[:, 1] = values[:, 1].astype(float) - base
+            accessor["min"][1], accessor["max"][1] = float(values[:, 1].min()), float(values[:, 1].max())
             spool.seek(span["byteOffset"])
-            spool.write(bytes(values))
+            spool.write(values.tobytes())
         spool.seek(0, 2)
         gltf["asset"]["extras"] = dict(
             latitude=lat, longitude=lon, base=base, radius=radius, bounds=list(area),

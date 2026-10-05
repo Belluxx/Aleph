@@ -1,4 +1,4 @@
-"""Standard-library reader/extractor for sorted OSM snapshot PBFs.
+"""Reader/extractor for sorted OSM snapshot PBFs.
 
 Schema: https://github.com/openstreetmap/OSM-binary/tree/master/osmpbf
 Supports raw/zlib blobs, ordinary/dense nodes, ways, relations and OSM metadata.
@@ -9,7 +9,6 @@ import math
 import os
 import re
 import struct
-import sys
 import zlib
 from array import array
 from collections import defaultdict, deque
@@ -21,16 +20,14 @@ from multiprocessing import get_context
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
+import numpy as np
+
 from .common import atomic_path
 
 MAX_BLOB = 32 * 1024 * 1024
 MEMBERS = ("node", "way", "relation")
-SIGNED_SMALL = tuple((v >> 1) ^ -(v & 1) for v in range(128))
 SIGNED_BYTES = bytes(((v >> 1) ^ -(v & 1)) & 255 for v in range(256))
-MULTIBYTE = re.compile(rb"[\x80-\xff]")
-VARINTS = re.compile(rb"[\x80-\xff]+[\x00-\x7f]")
-SHORT_RUN = re.compile(rb"[\x00-\x7f]{32}")
-LONG_VARINT = re.compile(rb"[\x80-\xff]{4}")
+NUMPY_BYTES = 256  # Shorter packed fields decode faster in Python than through numpy's per-call overhead.
 TAG_ROWS = re.compile(rb"(?<![\x80-\xff])\x00")
 quoted = lru_cache(maxsize=8192)(quoteattr)
 _SPATIAL = None
@@ -81,99 +78,44 @@ def fields(data):
         yield number, value
 
 
-@lru_cache(maxsize=16)
-def lanes(count):
-    """One bit at the start of each 32-bit lane of a Python integer."""
-    return int.from_bytes(b"\x01\0\0\0" * count, "little")
-
-
-def unpack_bulk(data, signed):
-    """Decode short varints together using C-backed bytes and big integers.
-
-    Each input byte becomes a 32-bit lane. Two masked shifts combine up to
-    four base-128 digits. Mark continuation lanes with 0x80, delete them in
-    C, then compact the remaining digits into ordinary 32-bit integers.
-    """
-    count = len(data)
-    one = lanes(count)
-    low = one * 127
-    raw = int.from_bytes(data.decode("latin1").encode("utf-32le"), "little")
-    more = (raw >> 7) & one
-    value = raw & low
-    mask = more * 0xffffffff
-    value |= ((value >> 32) << 7) & mask
-    mask &= mask >> 32
-    value |= ((value >> 64) << 14) & mask
-    drop = (more << 32) & one
-    value = ((value & low) | ((value & (low << 7)) << 1)
-             | ((value & (low << 14)) << 2) | ((value & (low << 21)) << 3))
-    value = (value & ((one ^ drop) * 0xffffffff)) | (drop * 0x80808080)
-    packed = value.to_bytes(count * 4, "little").translate(None, b"\x80")
-    one = lanes(len(packed) // 4)
-    low = one * 127
-    value = int.from_bytes(packed, "little")
-    value = ((value & low) | ((value & (low << 8)) >> 1)
-             | ((value & (low << 16)) >> 2) | ((value & (low << 24)) >> 3))
+def varints(data, signed=False):
+    """Packed varints as a uint64 array, or int64 when zigzag-encoded."""
+    raw = np.frombuffer(data, np.uint8)
+    if not raw.size:
+        return np.zeros(0, np.int64 if signed else np.uint64)
+    if raw[-1] >= 128:
+        raise ValueError("Truncated PBF packed integer.")
+    ends = np.flatnonzero(raw < 128)
+    starts = np.concatenate(([0], ends[:-1] + 1))
+    lengths = ends - starts + 1
+    # Ten bytes hold 64 bits only when the last carries a single bit.
+    if lengths.max() > 10 or (raw[ends[lengths == 10]] > 1).any():
+        raise ValueError("PBF integer overflow.")
+    shifts = (np.arange(raw.size) - np.repeat(starts, lengths)).astype(np.uint64) * np.uint64(7)
+    values = np.bitwise_or.reduceat((raw & 127).astype(np.uint64) << shifts, starts)
     if signed:
-        value = ((value >> 1) & (one * 0x7fffffff)) ^ ((value & one) * 0xffffffff)
-    result = array("i" if signed else "I", value.to_bytes(len(packed), "little"))
-    if sys.byteorder != "little":
-        result.byteswap()
-    return result
+        return (values >> np.uint64(1)).astype(np.int64) ^ -(values & np.uint64(1)).astype(np.int64)
+    return values
 
 
 def unpack(data, signed=False):
-    """Decode packed integers, with a C-level fast path for single-byte values."""
-    if not MULTIBYTE.search(data):
+    """Packed integers as a sequence of Python ints."""
+    if len(data) >= NUMPY_BYTES:
+        return varints(data, signed).tolist()
+    if data.isascii():
         return array("b", data.translate(SIGNED_BYTES)) if signed else data
-    if len(data) > 512 and SHORT_RUN.search(data):
-        values, offset = [], 0
-        for match in VARINTS.finditer(data):
-            tail = data[offset:match.start()]
-            values.extend(array("b", tail.translate(SIGNED_BYTES)) if signed else tail)
-            value, _ = varint(match[0], 0)
-            values.append(zigzag(value) if signed else value)
-            offset = match.end()
-        tail = data[offset:]
-        if MULTIBYTE.search(tail):
-            raise ValueError("Truncated PBF packed integer.")
-        values.extend(array("b", tail.translate(SIGNED_BYTES)) if signed else tail)
-        return values
-    if len(data) > 512:
-        first, offset = varint(data, 0)
-        tail = data[offset:]
-        if not LONG_VARINT.search(tail):
-            if tail and tail[-1] >= 128:
-                raise ValueError("Truncated PBF packed integer.")
-            values = [zigzag(first) if signed else first]
-            values.extend(unpack_bulk(tail, signed))
-            return values
-    values = []
-    packed = iter(data)
-    small = SIGNED_SMALL if signed else range(128)
-    try:
-        for byte in packed:
-            if byte < 128:
-                values.append(small[byte])
-                continue
-            value = byte & 127
-            byte = next(packed)
-            value |= (byte & 127) << 7
-            if byte >= 128:
-                byte = next(packed)
-                value |= (byte & 127) << 14
-                shift = 21
-                while byte >= 128:
-                    byte = next(packed)
-                    value |= (byte & 127) << shift
-                    shift += 7
-                    if shift > 70:
-                        raise ValueError("Invalid PBF packed integer.")
-                if value >= 1 << 64:
-                    raise ValueError("PBF integer overflow.")
+    values, value, shift = [], 0, 0
+    for byte in data:
+        value |= (byte & 127) << shift
+        if byte < 128:
+            if value >= 1 << 64:
+                raise ValueError("PBF integer overflow.")
             values.append((value >> 1) ^ -(value & 1) if signed else value)
-    except StopIteration:
-        raise ValueError("Truncated PBF packed integer.") from None
+            value = shift = 0
+        elif (shift := shift + 7) > 63:
+            raise ValueError("Invalid PBF packed integer.")
+    if shift:
+        raise ValueError("Truncated PBF packed integer.")
     return values
 
 
@@ -185,12 +127,13 @@ def signed64(value):
     return value - (1 << 64) if value >= 1 << 63 else value
 
 
+def column(data):
+    """A delta-coded column as an int64 array."""
+    return np.cumsum(varints(data, True))
+
+
 def deltas(data):
-    """Separate the first absolute value so small deltas use the fast path."""
-    if not data:
-        return iter(())
-    first, offset = varint(data, 0)
-    return accumulate(chain((zigzag(first),), unpack(data[offset:], True)))
+    return column(data).tolist() if len(data) >= NUMPY_BYTES else list(accumulate(unpack(data, True)))
 
 
 def inflate(data):
@@ -244,9 +187,9 @@ def columns(message):
 
 def dense(message):
     values = columns(message)
-    ids = list(deltas(values.get(1, b"")))
-    lats = list(deltas(values.get(8, b"")))
-    lons = list(deltas(values.get(9, b"")))
+    ids = deltas(values.get(1, b""))
+    lats = deltas(values.get(8, b""))
+    lons = deltas(values.get(9, b""))
     if not len(ids) == len(lats) == len(lons):
         raise ValueError("Mismatched dense PBF coordinate columns.")
     return values, ids, lats, lons
@@ -261,44 +204,40 @@ def scan_nodes(task):
         south, west, north, east = area
         south, north = math.ceil((south * 1e9 - lat_offset) / gran), math.floor((north * 1e9 - lat_offset) / gran)
         west, east = math.ceil((west * 1e9 - lon_offset) / gran), math.floor((east * 1e9 - lon_offset) / gran)
-    selected, first, last, kinds = array("q"), None, None, 0
-    coordinates = (array("q"), array("q")) if retain else None
+    hits, first, last, kinds = [], None, None, 0
     for group in groups:
         for kind, message in fields(group):
             if kind not in (1, 2, 3, 4):
                 raise ValueError("Unsupported OSM primitive in PBF snapshot.")
             kinds |= 1 << kind
             if kind == 2:
-                if area is None:
-                    ids = list(deltas(columns(message).get(1, b"")))
-                else:
-                    _, ids, lats, lons = dense(message)
+                row = columns(message)
+                ids = column(row.get(1, b""))
+                if area is not None:
+                    lats, lons = column(row.get(8, b"")), column(row.get(9, b""))
+                    if not ids.size == lats.size == lons.size:
+                        raise ValueError("Mismatched dense PBF coordinate columns.")
             elif kind == 1:
                 node = dict(fields(message))
-                ids, lats, lons = [zigzag(node[1])], [zigzag(node[8])], [zigzag(node[9])]
+                ids, lats, lons = (np.array([zigzag(node[key])]) for key in (1, 8, 9))
             else:
                 continue
-            if ids:
-                if any(a >= b for a, b in zip(ids, ids[1:])) or (last is not None and ids[0] <= last):
+            if ids.size:
+                if (np.diff(ids) <= 0).any() or (last is not None and ids[0] <= last):
                     raise ValueError("PBF nodes must be sorted by unique ID.")
-                first = ids[0] if first is None else first
-                last = ids[-1]
+                first = int(ids[0]) if first is None else first
+                last = int(ids[-1])
                 if area is not None:
-                    if retain:
-                        hits = [i for i, (lat, lon) in enumerate(zip(lats, lons))
-                                if south <= lat <= north and west <= lon <= east]
-                        selected.extend(ids[i] for i in hits)
-                        coordinates[0].extend(lats[i] for i in hits)
-                        coordinates[1].extend(lons[i] for i in hits)
-                    else:
-                        selected.extend(identity for identity, lat, lon in zip(ids, lats, lons)
-                                        if south <= lat <= north and west <= lon <= east)
-    return kinds, first, last, selected, coordinates
+                    inside = (lats >= south) & (lats <= north) & (lons >= west) & (lons <= east)
+                    hits.append((ids[inside], lats[inside], lons[inside]))
+    selected, lats, lons = (np.concatenate(parts) for parts in zip(*hits)) if hits else [np.zeros(0, np.int64)] * 3
+    coordinates = (array("q", lats.tobytes()), array("q", lons.tobytes())) if retain else None
+    return kinds, first, last, array("q", selected.tobytes()), coordinates
 
 
 def spatial_nodes(ids):
     global _SPATIAL
-    _SPATIAL = set(ids)
+    _SPATIAL = np.sort(np.array(ids, np.int64))
 
 
 def way_references(message):
@@ -328,38 +267,56 @@ def way_references(message):
     return refs
 
 
+def touching(messages):
+    """Which ways reference a spatial node, decoding all of a block's references at once."""
+    refs = [way_references(message) for message in messages]
+    data = b"".join(refs)
+    if not data:
+        return np.zeros(len(messages), bool)
+    # The way of each reference, from where its last byte falls among the ways' byte ranges.
+    owners = np.searchsorted(np.cumsum([len(r) for r in refs]), np.flatnonzero(np.frombuffer(data, np.uint8) < 128),
+                             side="right")
+    totals = np.cumsum(varints(data, True))
+    # Deltas restart in each way: subtract the running total reached before its first reference.
+    firsts = np.searchsorted(owners, owners, side="left")
+    nodes = totals - np.where(firsts > 0, totals[firsts - 1], 0)
+    found = np.minimum(np.searchsorted(_SPATIAL, nodes), _SPATIAL.size - 1)
+    hit = np.zeros(len(messages), bool)
+    if _SPATIAL.size:
+        hit[owners[_SPATIAL[found] == nodes]] = True
+    return hit
+
+
 def scan_ways(task):
     """Select spatial ways or requested member IDs and record the block's ID range."""
     path, entry, xml, wanted = task
     values, groups = block(path, entry)
+    messages = [message for group in groups for kind, message in fields(group) if kind == 3]
+    if not messages:
+        raise ValueError("PBF way block contains no ways.")
+
+    def identity(message):
+        # Geofabrik writes ID first.
+        return varint(message, 1)[0] if message[:1] == b"\x08" else columns(message)[1]
+
+    if wanted is not None:
+        chosen = [message for message in messages if identity(message) in wanted]
+    else:
+        chosen = [message for message, hit in zip(messages, touching(messages)) if hit]
     selected, identities, nodes = [], array("q"), set()
-    first = last = None
-    strings = None
-    for group in groups:
-        for kind, message in fields(group):
-            if kind == 3:
-                if first is None:
-                    first = message
-                last = message
-                if wanted is not None:
-                    identity = varint(message, 1)[0] if message[:1] == b"\x08" else columns(message)[1]
-                    if identity not in wanted:
-                        continue
-                packed = way_references(message)
-                if wanted is not None or not _SPATIAL.isdisjoint(deltas(packed)):
-                    row = columns(message)
-                    refs = list(deltas(packed))
-                    if strings is None:
-                        strings = StringTable(values[1])
-                    item = dict(type="way", id=row[1], nodes=refs, tags=tags(row, strings),
-                                attrs=info(dict(fields(row.get(4, b""))), strings, values.get(18, 1000)))
-                    if xml:
-                        identities.append(row[1])
-                        nodes.update(refs)
-                        selected.append(xml_object(item))
-                    else:
-                        selected.append(item)
-    bounds = tuple(varint(m, 1)[0] if m[:1] == b"\x08" else columns(m)[1] for m in (first, last))
+    strings = StringTable(values[1]) if chosen else None
+    for message in chosen:
+        row = columns(message)
+        refs = deltas(row.get(8, b""))
+        item = dict(type="way", id=row[1], nodes=refs, tags=tags(row, strings),
+                    attrs=info(dict(fields(row.get(4, b""))), strings, values.get(18, 1000)))
+        if xml:
+            identities.append(row[1])
+            nodes.update(refs)
+            selected.append(xml_object(item))
+        else:
+            selected.append(item)
+    bounds = identity(messages[0]), identity(messages[-1])
     result = (identities, array("q", nodes), "".join(selected).encode()) if xml else selected
     return bounds, result
 
@@ -462,7 +419,7 @@ def read_nodes(task):
                     node, ids, lats, lons = dense(message)
                 else:
                     node = columns(message)
-                    ids = list(deltas(node.get(1, b"")))
+                    ids = deltas(node.get(1, b""))
                     lats, lons = [0] * len(ids), [0] * len(ids)
                 if len(wanted) * 8 < len(ids):
                     selected = sorted(i for identity in wanted
@@ -494,7 +451,7 @@ def read_nodes(task):
                                 if not data[offset:].strip(b"\0"):
                                     metadata[key] = [zigzag(first)] * (len(data) - offset + 1)
                                 else:
-                                    metadata[key] = list(deltas(data))
+                                    metadata[key] = deltas(data)
                             else:
                                 metadata[key] = unpack(data)
                             if len(metadata[key]) != len(ids):
@@ -631,7 +588,7 @@ class PBF:
             if name is not None and (properties.get("name") != name or not properties.get("highway")):
                 continue
             way = dict(type="way", id=row[1], tags=properties,
-                       nodes=list(deltas(row.get(8, b""))),
+                       nodes=deltas(row.get(8, b"")),
                        attrs=info(dict(fields(row.get(4, b""))), strings, date_gran))
             if wanted is not None or name is not None:
                 self.selected_ways[way["id"]] = way
@@ -641,7 +598,7 @@ class PBF:
         rows = ((4, *self.selected_relations[i]) for i in sorted(wanted)) if (
             wanted is not None and wanted <= self.selected_relations.keys()) else self.raw((4,), wanted)
         for _, row, strings, date_gran in rows:
-            refs = list(deltas(row.get(9, b"")))
+            refs = deltas(row.get(9, b""))
             roles, kinds = unpack(row.get(8, b"")), unpack(row.get(10, b""))
             if not len(refs) == len(roles) == len(kinds):
                 raise ValueError("Mismatched PBF relation member columns.")
@@ -688,7 +645,7 @@ class PBF:
         for _, row, strings, date_gran in self.raw((4,)):
             identity = row[1]
             rows[identity] = row, strings, date_gran
-            refs = list(deltas(row.get(9, b"")))
+            refs = deltas(row.get(9, b""))
             kinds = unpack(row.get(10, b""))
             matched = False
             for kind, ref in zip(kinds, refs):
