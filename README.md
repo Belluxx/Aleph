@@ -45,7 +45,7 @@ alephgeo --help
 alephgeo dashboard -o captures
 ```
 
-The dashboard opens in your browser at `http://127.0.0.1:8100`. Draw a rectangle on the map, choose the sources and their settings, check the preview and time estimate, then start the capture. Open any capture to show or hide each layer. Captures are saved in `captures`.
+The dashboard opens in your browser at `http://127.0.0.1:8100`. Draw a rectangle on the map, choose the sources and their settings, check the preview and time estimate, then start the capture. Open any capture to show or hide each layer, or to explore its 3D mesh or terrain relief in 3D. Captures are saved in `captures`.
 
 The basemap comes from [OpenFreeMap](https://openfreemap.org) and needs an internet connection.
 

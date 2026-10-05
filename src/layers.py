@@ -81,9 +81,9 @@ def heights(path):
             if source.value(259) != 1:
                 data = zlib.decompress(data)
             if source.float and predictor == 3:
-                # Rows hold byte differences across four planes, most significant first.
-                planes = np.cumsum(np.frombuffer(data, np.uint8).reshape(size, 4, size), axis=2, dtype=np.uint8)
-                block = planes.transpose(0, 2, 1).copy().view(">f4")
+                # Rows hold four byte planes, most significant first, with differences running on across planes.
+                rows = np.cumsum(np.frombuffer(data, np.uint8).reshape(size, 4 * size), axis=1, dtype=np.uint8)
+                block = rows.reshape(size, 4, size).transpose(0, 2, 1).copy().view(">f4")
             elif source.float:
                 block = np.frombuffer(data, order + "f4")
             else:
@@ -125,6 +125,13 @@ def hillshade(center, neighbors, meters_per_pixel, exaggeration):
     return Image.fromarray(np.dstack((tone, tone, tone, np.where(inner, alpha, 0).astype(np.uint8))), "RGBA")
 
 
+def terrarium(image, base):
+    """Heights above base as Terrarium RGB for MapLibre terrain, which has no transparency: missing heights sit at base."""
+    values = np.asarray(image, np.float64)
+    values = np.clip(np.where(values > NODATA / 2, values - base, 0) + 32768, 0, 65535)
+    return Image.fromarray(np.dstack((values // 256, values % 256, values % 1 * 256)).astype(np.uint8), "RGB")
+
+
 def png(image):
     with BytesIO() as buffer:
         image.save(buffer, format="PNG", compress_level=1)
@@ -140,9 +147,10 @@ class Tiles:
         self.lock = threading.Lock()
         # One build per layer at a time: parallel builds of overlapping overviews would repeat the same decoding.
         self.builds = defaultdict(threading.Lock)
+        self.bases = {}  # Folder → (saved count, lowest height).
 
-    def get(self, folder, stage, z, x, y):
-        """Return (bytes, content type), or None where nothing is saved yet."""
+    def get(self, folder, stage, z, x, y, dem=False):
+        """Return (bytes, content type), or None where nothing is saved yet; dem asks for terrain heights, not shading."""
         grid = stage["grid"]
         if not lowest(stage) <= z <= grid["zoom"] or not (0 <= x < 2**z and 0 <= y < 2**z):
             return None
@@ -157,8 +165,12 @@ class Tiles:
             build = self.builds[folder, stage["mode"]]
         with build:
             image = self.image(folder, stage, z, x, y)
+            base = self.base(folder, stage) if dem and image is not None else None
         if image is None:
             return None
+        if dem:
+            with terrarium(image, base) as encoded:
+                return png(encoded), "image/png"
         if stage["mode"] == "terrain":
             # Building neighbors would cost as much as the tile itself; edges are extrapolated without them.
             neighbors = [self.cached(folder, stage, z, x + dx, y + dy) for dx, dy in NEIGHBORS]
@@ -168,6 +180,18 @@ class Tiles:
             with hillshade(image, neighbors, meters, 2 ** ((grid["zoom"] - z) / RELIEF)) as shaded:
                 return png(shaded), "image/png"
         return png(image), "image/png"
+
+    def base(self, folder, stage):
+        """Lowest saved height, so terrain rises from the flat map around it; callers hold the build lock."""
+        version = len(stage["results"])
+        if self.bases.get(folder, (None,))[0] != version:
+            lowest = np.inf
+            for result in stage["results"]:
+                with heights(contained(folder, result["filename"])) as image:
+                    values = np.asarray(image)
+                    lowest = min(lowest, values.min(initial=np.inf, where=values > NODATA / 2))
+            self.bases[folder] = version, 0.0 if lowest == np.inf else float(lowest)
+        return self.bases[folder][1]
 
     def cached(self, folder, stage, z, x, y):
         version = saved(stage["grid"], len(stage["results"]), z, x, y)

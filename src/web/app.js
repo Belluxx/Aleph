@@ -51,6 +51,8 @@ const SHORTER = {streetview: "wider Street View spacing", satellite: "a lower sa
                  mesh: "lower 3D mesh detail"};
 // Progress phases that a capture stage row already shows.
 const DOWNLOADS = new Set(["Street View", "Satellite", "Downloading terrain tiles", "3D mesh"]);
+const LARGE_MESH = 250e6;  // Bytes of mesh.glb that ask first: its textures can need several GB of graphics memory.
+const PITCH = 60;  // Degrees the map tilts to for 3D layers.
 
 // Helpers
 
@@ -159,9 +161,12 @@ const state = {
   search: [],
   toggles: {photos: true, route: true, satellite: true, terrain: true, buildings: true, roads: true, water: true,
             outline: true, basemap: true, ...store.get("toggles", {})},
+  solid: null,  // 3D layer shown in a capture: "mesh", "relief", or null.
+  meshLoading: false,
 };
 
 let map;
+let navigation;
 let basemapLayers = [];
 // Raster source and layer ids per mode, oldest first; a refresh loads on top until it replaces the older one.
 const rasters = {satellite: [], terrain: []};
@@ -368,7 +373,124 @@ function clearCaptureLayers() {
   for (const ids of Object.values(rasters)) ids.splice(0).forEach(removeRaster);
   for (const source of ["osm", "photos", "selected", "bounds", "plan"]) setData(source, EMPTY);
   Object.assign(state, {photos: [], photoCount: 0, photoAgain: false, live: {}, selected: null});
+  if (state.solid) {
+    state.solid = null;
+    syncSolid();
+    map.jumpTo({pitch: 0, bearing: 0});  // The next view fits its bounds, which would keep a half-eased tilt.
+  }
+  if (map.getSource("dem")) map.removeSource("dem");
   $("#viewer").hidden = true;
+}
+
+// 3D
+
+let three = null;  // three.js and its glTF loader, imported on first use.
+
+function loadThree() {
+  three ??= Promise.all([import("three"), import("three/addons/loaders/GLTFLoader.js")]).catch(error => {
+    three = null;  // Try again next time, such as once back online.
+    throw error;
+  });
+  return three;
+}
+
+// A custom layer drawing mesh.glb, in meters east (x), up (y) and south (z) of the capture's center.
+async function meshLayer(capture) {
+  const [THREE, {GLTFLoader}] = await loadThree();
+  const {scene} = await new GLTFLoader().loadAsync(absolute(capturePath(capture.id, "/files/mesh.glb")));
+  // Rest the ground along its edges on the flat map, where they meet: the lowest point at y = 0 can be a pit,
+  // such as an arena floor or an underpass. A low share of edge heights skips roofs cut by the edges.
+  const box = new THREE.Box3().setFromObject(scene), edges = [];
+  scene.traverse(({geometry}) => {
+    const position = geometry?.attributes.position;
+    for (let i = 0; i < (position?.count ?? 0); i++) {
+      const x = position.getX(i), z = position.getZ(i);
+      if (Math.min(x - box.min.x, box.max.x - x, z - box.min.z, box.max.z - z) < 10) edges.push(position.getY(i));
+    }
+  });
+  edges.sort((a, b) => a - b);
+  const ground = edges[Math.floor(edges.length / 10)] ?? 0;
+  const [s, w, n, e] = capture.bounds;
+  const origin = maplibregl.MercatorCoordinate.fromLngLat([(w + e) / 2, (s + n) / 2], -ground);
+  const scale = origin.meterInMercatorCoordinateUnits();
+  // Mercator runs x east, y south and z up: turn y-up into z-up, then mirror y so glTF's south stays south.
+  const place = new THREE.Matrix4().makeTranslation(origin.x, origin.y, origin.z)
+    .scale(new THREE.Vector3(scale, -scale, scale)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+  const camera = new THREE.Camera();
+  let renderer;
+  return {
+    id: "mesh", type: "custom", renderingMode: "3d",
+    onAdd(map, gl) {
+      renderer = new THREE.WebGLRenderer({canvas: map.getCanvas(), context: gl});
+      renderer.autoClear = false;  // Draw over the map.
+    },
+    render(gl, {defaultProjectionData}) {
+      camera.projectionMatrix.fromArray(defaultProjectionData.mainMatrix).multiply(place);
+      renderer.resetState();
+      renderer.render(scene, camera);
+    },
+    onRemove() {
+      scene.traverse(object => {
+        object.geometry?.dispose();
+        object.material?.map?.dispose();
+        object.material?.dispose();
+      });
+      renderer.dispose();
+    },
+  };
+}
+
+// 3D layers tilt the map and let it rotate; otherwise it stays flat and north up.
+function tilt(on) {
+  if (on === map.dragRotate.isEnabled()) return;
+  for (const handler of [map.dragRotate, map.touchPitch]) on ? handler.enable() : handler.disable();
+  for (const handler of [map.touchZoomRotate, map.keyboard]) on ? handler.enableRotation() : handler.disableRotation();
+  map.removeControl(navigation);
+  navigation = new maplibregl.NavigationControl({showCompass: on, visualizePitch: true});
+  map.addControl(navigation, "top-right");
+  map.easeTo(on ? {pitch: PITCH} : {pitch: 0, bearing: 0});
+}
+
+async function setSolid(kind, on) {
+  const bytes = state.capture.files["mesh.glb"];
+  if (on && kind === "mesh" && bytes > LARGE_MESH && !await confirmMesh(bytes)) return renderLayers();
+  state.solid = on ? kind : null;
+  renderLayers();
+  syncSolid();
+}
+
+// Show the mesh or the terrain relief, one at a time since the mesh has its own ground.
+async function syncSolid() {
+  const {solid, capture} = state;
+  if (solid !== "relief" && map.getTerrain()) map.setTerrain(null);
+  if (solid !== "mesh" && map.getLayer("mesh")) map.removeLayer("mesh");
+  tilt(!!solid);
+  if (solid === "relief") {
+    const [s, w, n, e] = capture.bounds, {minzoom, zoom} = capture.stages.terrain;
+    if (!map.getSource("dem")) {
+      map.addSource("dem", {type: "raster-dem", encoding: "terrarium", tileSize: 512, bounds: [w, s, e, n], minzoom,
+                            maxzoom: zoom, tiles: [absolute(capturePath(capture.id, "/dem/{z}/{x}/{y}"))]});
+    }
+    map.setTerrain({source: "dem"});
+  }
+  if (solid !== "mesh" || map.getLayer("mesh")) return;
+  state.meshLoading = true;
+  renderLayers();
+  const current = () => state.capture?.id === capture.id && state.solid === "mesh";
+  try {
+    const layer = await meshLayer(capture);
+    if (current() && !map.getLayer("mesh")) map.addLayer(layer);
+  } catch (error) {
+    if (current()) {
+      state.solid = null;
+      syncSolid();
+      $("#capture-error").textContent = `Could not show the 3D mesh: ${error.message}`;
+      $("#capture-error").hidden = false;
+    }
+  } finally {
+    state.meshLoading = false;
+    renderLayers();
+  }
 }
 
 // Area drawing
@@ -680,17 +802,30 @@ function confirmCapture(preview) {
 
 // Time per source, why it is slow and what helps; resolves true to go ahead.
 function confirmSlow(subject, times, text, anyway) {
-  const dialog = $("#slow");
   const pace = speed(Object.values(times).reduce((sum, seconds) => sum + seconds, 0));
-  $("h2", dialog).innerHTML = `${icon(pace.icon)}${subject} will take ${pace.name}`;
-  $("h2", dialog).classList.toggle("alert", !!pace.alert);
-  $("ul", dialog).innerHTML = Object.entries(times).map(([mode, seconds]) => {
+  const rows = Object.entries(times).map(([mode, seconds]) => {
     const {icon: name, alert} = speed(seconds);
     return `<li>${icon(mode)}<span>${NAMES[mode]}</span>
       <span class="estimate ${alert ? "alert" : ""}">${icon(name)}${speed(seconds).name}</span></li>`;
   }).join("");
+  return ask(`${icon(pace.icon)}${subject} will take ${pace.name}`, !!pace.alert, rows, text, anyway, "Change settings");
+}
+
+function confirmMesh(bytes) {
+  return ask(`${icon("warning")}mesh.glb is ${megabytes(bytes)}`, true, "", "Its textures may need several GB of "
+    + "graphics memory, which can crash this tab. Blender handles large meshes better.", "Show anyway", "Cancel");
+}
+
+// Resolves true to go ahead.
+function ask(title, alert, rows, text, anyway, back) {
+  const dialog = $("#ask");
+  $("h2", dialog).innerHTML = title;
+  $("h2", dialog).classList.toggle("alert", alert);
+  $("ul", dialog).innerHTML = rows;
+  $("ul", dialog).hidden = !rows;
   $("p", dialog).textContent = text;
   $("[value=go]", dialog).textContent = anyway;
+  $("[value='']", dialog).textContent = back;
   dialog.returnValue = "";
   dialog.showModal();
   return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "go"), {once: true}));
@@ -818,9 +953,11 @@ function renderLayers() {
   const c = state.capture;
   if (!c) return;
   const s = c.stages;
-  const toggle = (key, name, value = "", disabled = false) => `<label class="toggle">
-    <input type="checkbox" data-toggle="${key}" ${state.toggles[key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
+  const row = (attribute, checked, name, value, disabled) => `<label class="toggle">
+    <input type="checkbox" ${attribute} ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}>
     <span>${name}</span><span class="value">${esc(value)}</span></label>`;
+  const toggle = (key, name, value = "", disabled = false) => row(`data-toggle="${key}"`, state.toggles[key], name, value, disabled);
+  const solid = (kind, name, value, disabled) => row(`data-solid="${kind}"`, state.solid === kind, name, value, disabled);
   const groups = [];
   if (s.streetview) {
     const skipped = s.streetview.skipped ? ` · ${number(s.streetview.skipped)} skipped` : "";
@@ -836,11 +973,15 @@ function renderLayers() {
     groups.push(["osm", toggle("buildings", "Buildings", note, !saved) + toggle("roads", "Roads and paths", note, !saved)
       + toggle("water", "Water and land", note, !saved)]);
   }
-  if (s.terrain) groups.push(["terrain", toggle("terrain", "Hillshade", `zoom ${s.terrain.zoom} · ${tileCount("terrain")}`)]);
+  if (s.terrain) {
+    const saved = (state.live.terrain ?? s.terrain.done) >= s.terrain.total;
+    groups.push(["terrain", toggle("terrain", "Hillshade", `zoom ${s.terrain.zoom} · ${tileCount("terrain")}`)
+      + solid("relief", "3D relief", saved ? "" : "after download", !saved)]);
+  }
   if (s.mesh) {
     const glb = c.files["mesh.glb"];
-    groups.push(["mesh", `<p class="toggle"><span>mesh.glb</span><span class="value">${
-      glb ? megabytes(glb) : `${number(s.mesh.done)} / ${plural(s.mesh.total, "node")}`}</span></p>`]);
+    groups.push(["mesh", solid("mesh", "Show in 3D", state.meshLoading ? "Loading…" : glb ? megabytes(glb)
+      : `${number(s.mesh.done)} / ${plural(s.mesh.total, "node")}`, !glb)]);
   }
   groups.push(["map", toggle("outline", "Capture outline") + toggle("basemap", "Basemap")]);
   $("#layers").innerHTML = groups.map(([mode, rows]) =>
@@ -1030,7 +1171,8 @@ function bind() {
   $("#captures").addEventListener("mouseleave", () => hoverCapture(null));
 
   $("#layers").addEventListener("change", event => {
-    const key = event.target.dataset.toggle;
+    const {toggle: key, solid} = event.target.dataset;
+    if (solid) return setSolid(solid, event.target.checked);
     if (!key) return;
     state.toggles[key] = event.target.checked;
     store.set("toggles", state.toggles);
@@ -1143,9 +1285,11 @@ async function init() {
 
   const view = store.get("view", {center: [12.49, 41.89], zoom: 2});
   map = new maplibregl.Map({container: "map", style: await basemap(), center: view.center, zoom: view.zoom,
-                            attributionControl: {compact: true}, dragRotate: false, pitchWithRotate: false});
+                            attributionControl: {compact: true}, dragRotate: false, touchPitch: false});
   map.touchZoomRotate.disableRotation();
-  map.addControl(new maplibregl.NavigationControl({showCompass: false}), "top-right");
+  map.keyboard.disableRotation();
+  navigation = new maplibregl.NavigationControl({showCompass: false});
+  map.addControl(navigation, "top-right");
   map.addControl(new maplibregl.ScaleControl({unit: "metric"}), "bottom-left");
   await map.once("load");
 

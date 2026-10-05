@@ -85,7 +85,8 @@ def float_tile(order, predictor, x=8):
         encoded = bytearray()
         for y in range(512):
             row = raw[y * 2048:(y + 1) * 2048]
-            planes = b"".join(row[i::4] for i in range(4))
+            # Planes start from the most significant byte, whatever the file's byte order.
+            planes = b"".join(row[i::4] for i in ((0, 1, 2, 3) if order == ">" else (3, 2, 1, 0)))
             encoded.extend(bytes([planes[0]]) + bytes((b - a) & 255 for a, b in zip(planes, planes[1:])))
         data = zlib.compress(encoded)
     else:
@@ -141,14 +142,15 @@ def int16_tile(order, x=8):
     return terrain.header(tags, order) + b"".join(blocks), heights
 
 
-def decode_float_block(data, predictor):
+def decode_float_block(data, predictor, order):
     raw = zlib.decompress(data)
     if predictor != 3:
         return raw
     decoded = bytearray()
     for y in range(256):
         planes = bytes(v & 255 for v in accumulate(raw[y * 1024:(y + 1) * 1024]))
-        decoded.extend(v for pixel in zip(*(planes[i * 256:(i + 1) * 256] for i in range(4))) for v in pixel)
+        planes = [planes[i * 256:(i + 1) * 256] for i in range(4)]
+        decoded.extend(v for pixel in zip(*(planes if order == ">" else planes[::-1])) for v in pixel)
     return bytes(decoded)
 
 
@@ -176,8 +178,13 @@ class TerrainTests(unittest.TestCase):
                         left = column % 2 * 1024
                         expected = b"".join(original[y * 2048 + left:y * 2048 + left + 1024]
                                             for y in range(row * 256, (row + 1) * 256))
-                        self.assertEqual(decode_float_block(block, predictor), expected)
+                        self.assertEqual(decode_float_block(block, predictor, order), expected)
                     self.assertEqual(len(merged.values(324)), 8)
+                # The dashboard decodes saved tiles itself; prediction differences running across planes spiked heights.
+                for x, raw in zip((8, 9), originals):
+                    with layers.heights(folder / f"{x}.tif") as decoded:
+                        self.assertEqual(decoded.tobytes(), struct.pack(f"={512 * 512}f",
+                                                                        *struct.unpack(f"{order}{512 * 512}f", raw)))
 
     def test_truncated_or_misplaced_terrain_is_rejected(self):
         data, _ = float_tile("<", 3)

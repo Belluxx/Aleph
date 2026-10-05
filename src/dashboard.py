@@ -281,10 +281,13 @@ class Dashboard:
             cached = self.osm[identity] = signature, data
         return cached[1], "application/geo+json", 0
 
-    def tile(self, identity, mode, z, x, y):
+    def tile(self, identity, mode, z, x, y, dem=False):
         folder, stage, _ = self.stage(identity, mode)
+        # 3D terrain reloads as a whole, so it waits for every tile instead of growing with the download.
+        if dem and len(stage["results"]) < capture.total(stage):
+            raise FileNotFoundError("Terrain is still downloading.")
         z = int(z)
-        tile = self.tiles.get(folder, stage, z, int(x), int(y.split(".")[0]))
+        tile = self.tiles.get(folder, stage, z, int(x), int(y.split(".")[0]), dem)
         if tile is None:
             raise FileNotFoundError("No saved tile here.")
         # Saved patches never change. Built tiles are not cached, so rendering changes show up at once.
@@ -331,6 +334,8 @@ class Dashboard:
                 return self.tile(identity, "satellite", z, x, y)
             case "GET", ["api", "captures", identity, "hillshade", z, x, y]:
                 return self.tile(identity, "terrain", z, x, y)
+            case "GET", ["api", "captures", identity, "dem", z, x, y]:
+                return self.tile(identity, "terrain", z, x, y, dem=True)
             case "GET", ["api", "captures", identity, "files", *path] if path:
                 return self.file(identity, path)
             case "POST", ["api", "estimate"]:
