@@ -655,15 +655,20 @@ async function previewPlan(event) {
 function confirmPlan(planning, options) {
   const total = Object.values(planning).reduce((sum, seconds) => sum + seconds, 0);
   if (total < SLOW_PLAN) return Promise.resolve(true);
-  const slow = Object.entries(planning).filter(([, seconds]) => seconds >= SLOW_PLAN).sort((a, b) => b[1] - a[1]);
   // Levels above 20 also list every level-20 node, which multiplies the lookups.
-  const level = slow.some(([mode]) => mode === "mesh") && options.mesh_level > 20;
+  const level = planning.mesh >= SLOW_PLAN && options.mesh_level > 20;
   const dialog = $("#slow-plan");
   const pace = speed(total);
   $("h2", dialog).innerHTML = `${icon(pace.icon)}Planning will take ${pace.name}`;
   $("h2", dialog).classList.toggle("alert", !!pace.alert);
-  $("p", dialog).textContent = `${slow.map(([mode, seconds]) => `${NAMES[mode]} needs ${speed(seconds).name}`).join(" and ")
-    } of lookups before the preview appears. Draw a smaller area${level ? " or set 3D mesh detail to 20 or lower" : ""}.`;
+  $("ul", dialog).innerHTML = Object.entries(planning).map(([mode, seconds]) => {
+    const {icon: name, alert} = speed(seconds);
+    return `<li>${icon(mode)}<span>${NAMES[mode]}</span>
+      <span class="estimate ${alert ? "alert" : ""}">${icon(name)}${speed(seconds).name}</span></li>`;
+  }).join("");
+  const lookups = [planning.streetview != null && "panoramas", planning.mesh != null && "mesh nodes"].filter(Boolean).join(" and ");
+  $("p", dialog).textContent = `Every one of the area's ${lookups} is looked up before the preview appears. ${
+    level ? "Try 3D mesh detail 20 or lower, or a smaller area." : "Try a smaller area."}`;
   dialog.returnValue = "";
   dialog.showModal();
   return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "plan"), {once: true}));
