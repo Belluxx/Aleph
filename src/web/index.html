@@ -100,7 +100,7 @@
                   <label><input type="radio" name="streetview_format" value="png"><span>PNG</span></label>
                 </span>
               </label>
-              <label class="field"><span>Parallel requests</span><input type="number" name="streetview_workers" min="1" max="64" step="1"></label>
+              <label class="field slider"><span>Parallel requests</span><span class="range"><input type="range" name="streetview_workers" min="0" max="4" step="1"><b class="knob"></b><output class="tag"></output></span></label>
             </div>
           </fieldset>
 
@@ -115,7 +115,7 @@
                   <label><input type="radio" name="satellite_format" value="png"><span>PNG</span></label>
                 </span>
               </label>
-              <label class="field"><span>Parallel requests</span><input type="number" name="satellite_workers" min="1" max="64" step="1"></label>
+              <label class="field slider"><span>Parallel requests</span><span class="range"><input type="range" name="satellite_workers" min="0" max="4" step="1"><b class="knob"></b><output class="tag"></output></span></label>
             </div>
           </fieldset>
 
@@ -131,7 +131,7 @@
             <div class="fields">
               <label class="field slider"><span>Zoom</span><span class="range"><input type="range" name="terrain_zoom" min="8" max="14" step="1"><b class="knob"></b><output class="tag"></output></span></label>
               <p class="detail" data-detail="terrain"></p>
-              <label class="field"><span>Parallel requests</span><input type="number" name="terrain_workers" min="1" max="64" step="1"></label>
+              <label class="field slider"><span>Parallel requests</span><span class="range"><input type="range" name="terrain_workers" min="0" max="4" step="1"><b class="knob"></b><output class="tag"></output></span></label>
             </div>
           </fieldset>
 
@@ -140,7 +140,7 @@
             <div class="fields">
               <p class="detail">Google Earth photogrammetry, saved as mesh.glb.</p>
               <label class="field slider"><span>Detail level</span><span class="range"><input type="range" name="mesh_level" min="14" max="22" step="1"><b class="knob"></b><output class="tag"></output></span></label>
-              <label class="field"><span>Parallel requests</span><input type="number" name="mesh_workers" min="1" max="64" step="1"></label>
+              <label class="field slider"><span>Parallel requests</span><span class="range"><input type="range" name="mesh_workers" min="0" max="4" step="1"><b class="knob"></b><output class="tag"></output></span></label>
             </div>
           </fieldset>
         </section>

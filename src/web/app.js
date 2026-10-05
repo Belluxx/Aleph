@@ -21,6 +21,10 @@ const SCALES = {
   sphere_zoom: Object.fromEntries(["Thumbnail", "Low", "Medium", "High", "Very high", "Maximum"]
     .map((name, z) => [z, `${name} (${number(512 * 2 ** z)} px)`])),
 };
+// Sliders whose positions pick from a list of values.
+const WORKERS = [4, 8, 16, 32, 64];
+const CHOICES = {streetview_workers: WORKERS, satellite_workers: WORKERS, terrain_workers: WORKERS, mesh_workers: WORKERS};
+for (const name in CHOICES) SCALES[name] = {4: "Gentle", 8: "Balanced", 16: "Fast", 32: "Aggressive", 64: "Maximum"};
 // Planning times are shown coarsely, since the estimate is rough, rounded to the nearest unit at half of it.
 // Hours or more ask before planning.
 const SPEEDS = [{limit: 30, name: "seconds", icon: "bolt"}, {limit: 1800, name: "minutes", icon: "clock"},
@@ -600,6 +604,7 @@ function fillForm(options) {
     if (name === "include") input.checked = options.include.includes(input.value);
     else if (name === "camera") input.checked = (input.value === "sphere") === options.full_sphere;
     else if (input.type === "radio") input.checked = String(options[name]) === input.value;
+    else if (name in CHOICES) input.value = CHOICES[name].findLastIndex(value => value <= options[name]);
     else if (name in options) input.value = options[name];
   }
   updateForm();
@@ -609,7 +614,7 @@ function readForm() {
   const data = new FormData($("#settings"));
   const options = {include: data.getAll("include"), full_sphere: data.get("camera") === "sphere", depth: data.get("depth"),
                    streetview_format: data.get("streetview_format"), satellite_format: data.get("satellite_format")};
-  for (const name of NUMBERS) options[name] = Number(data.get(name));
+  for (const name of NUMBERS) options[name] = name in CHOICES ? CHOICES[name][data.get(name)] : Number(data.get(name));
   return options;
 }
 
@@ -621,8 +626,9 @@ function updateForm() {
     const range = input.parentElement, min = Number(input.min), max = Number(input.max);
     range.style.setProperty("--at", (input.value - min) / (max - min));
     range.style.setProperty("--steps", max - min);
-    $(".knob", range).textContent = input.value;
-    $(".tag", range).textContent = SCALES[input.name][input.value];
+    const value = CHOICES[input.name]?.[input.value] ?? input.value;
+    $(".knob", range).textContent = value;
+    $(".tag", range).textContent = SCALES[input.name][value];
     placeTag(range);
   }
   renderPreviewButton();
