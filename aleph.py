@@ -10,7 +10,7 @@ from pathlib import Path
 from src import capture, places, quick
 from src.cli import parser
 from src.common import CachedClient, Client, Progress, RequestError, now
-from src.geo import bounds
+from src.geo import bounds, corners, vertices
 
 
 def style(text, code="1"):
@@ -31,7 +31,7 @@ def describe(run):
         elif mode == "satellite":
             label = "Satellite"
             g = stage["grid"]
-            scale = capture.resolution(run["bounds"], g["zoom"])
+            scale = capture.resolution(run["polygon"], g["zoom"])
             message = f"{estimate['satellite_tiles']:,} tiles, {g['width']:,} × {g['height']:,} px at about {scale:.2f} m/px"
         elif mode == "osm":
             label = "OSM map"
@@ -202,10 +202,16 @@ def main(argv=None):
 
         action = args.action
         if action == "create":
+            if args.polygon:
+                if len(args.polygon) % 2:
+                    raise ValueError("--polygon takes LAT LON pairs.")
+                polygon = vertices(zip(args.polygon[::2], args.polygon[1::2]))
+            else:
+                polygon = corners(bounds(args.bbox))
             client = Client(args.delay, cache_dir=args.cache_dir, refresh=args.refresh)
             options = {key: getattr(args, key) for key in capture.DEFAULT_OPTIONS}
             with Progress() as progress:
-                run = capture.plan(client, bounds(args.bbox), options, progress)
+                run = capture.plan(client, polygon, options, progress)
         else:
             folder = args.folder.expanduser().resolve()
             run = capture.load(folder)

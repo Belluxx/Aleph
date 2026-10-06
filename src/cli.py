@@ -142,7 +142,9 @@ def _capture_command(commands):
     captures = commands.add_parser("capture", help="Create, resume, or export an area capture")
     actions = captures.add_subparsers(dest="action", required=True)
     area = actions.add_parser("create", help="Plan and download an area with multiple sources")
-    area.add_argument("--bbox", required=True, nargs=4, type=float, metavar=("S", "W", "N", "E"))
+    shape = area.add_mutually_exclusive_group(required=True)
+    shape.add_argument("--bbox", nargs=4, type=float, metavar=("S", "W", "N", "E"))
+    shape.add_argument("--polygon", nargs="+", type=float, metavar="LAT LON", help="polygon corners in order, at least three")
     area.add_argument("--sources", dest="include", nargs="+", choices=capture.SOURCES, help="sources to download (default: streetview satellite osm terrain)")
 
     # Planning and confirmation.

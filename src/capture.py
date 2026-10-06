@@ -12,10 +12,11 @@ from PIL import Image
 
 from . import mesh, satellite, streetview, terrain
 from .common import WORKERS, MissingImagery, contained, fetch, now, number, open_image, positive, write_bytes, write_json
-from .geo import MERCATOR_RADIUS, RADIUS, bounds, collection, coordinate, distance, feature, grid, pixel, tile_ring, tiles
+from .geo import (MERCATOR_RADIUS, RADIUS, collection, coordinate, corners, extent, feature, grid, lines, measure,
+                  pixel, tile_ring, tiles, vertices)
 
 SOURCES = ("streetview", "satellite", "osm", "terrain", "mesh")
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 DEFAULT_OPTIONS = dict(
     include=["streetview", "satellite", "osm", "terrain"], step=30, fov=75, depth="roads", streetview_format="jpg",
     full_sphere=False, sphere_zoom=3,
@@ -35,15 +36,15 @@ OSM_EXPORT_SECONDS = 10
 
 OSM_NOTES = {
     "map": "OSM XML from Geofabrik with original tags and topology; coordinates are WGS84. Contributor names, IDs and changeset IDs are omitted by Geofabrik.",
-    "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the rectangle; crossings without inside nodes and enclosing polygons may be absent.",
+    "selection": "Selected ways are complete. Selected multipolygons include all available outer boundaries and holes, but members missing from the regional file remain unresolved. Other relations may also be incomplete. Objects may extend outside the area; crossings without inside nodes and enclosing polygons may be absent.",
 }
 TERRAIN_NOTES = {
-    "terrain": "Heights in meters (Int16 up to zoom 12, Float32 from zoom 13), EPSG:3857, without resampling. Full edge tiles extend beyond the rectangle. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
+    "terrain": "Heights in meters (Int16 up to zoom 12, Float32 from zoom 13), EPSG:3857, without resampling. Every tile meeting the area's bounding box is saved, so terrain extends beyond the area. Tiles are checkpointed individually; terrain.tif is built after all terrain tiles are saved.",
     "quality": "Terrain resolution, dates, accuracy and vertical reference vary by source. Higher zoom does not guarantee more detail.",
 }
 MESH_NOTES = {
-    "mesh": "Google Earth 3D photogrammetry as glTF binary with Google's original JPEG textures and baked-in lighting. Coordinates are meters from the rectangle's center: x east, y up, z south. y = 0 is the lowest point; asset extras give its approximate height above sea level as base.",
-    "selection": "Nodes are saved as downloaded in mesh/nodes/. Finer nodes replace their parent's octants; triangles are kept when their center is inside the rectangle. Each glTF mesh holds up to 64 tiles from one octree block, with one material per original texture. Levels stop where Google's data ends; level 22 is the most detailed.",
+    "mesh": "Google Earth 3D photogrammetry as glTF binary with Google's original JPEG textures and baked-in lighting. Coordinates are meters from the center of the area's bounding box: x east, y up, z south. y = 0 is the lowest point; asset extras give its approximate height above sea level as base.",
+    "selection": "Nodes are saved as downloaded in mesh/nodes/. Finer nodes replace their parent's octants; triangles are kept when their center is inside the area. Each glTF mesh holds up to 64 tiles from one octree block, with one material per original texture. Levels stop where Google's data ends; level 22 is the most detailed.",
 }
 
 README = b"""Aleph capture
@@ -54,9 +55,9 @@ Open satellite.tif for satellite imagery and map.osm for native map data.
 Photo headings are clockwise from north; left/right follow OSM node order.
 GeoJSON files record paths, photo locations, or satellite patch footprints.
 satellite.tif is a lossless RGBA Cloud Optimized GeoTIFF in EPSG:3857.
-It is north-up, cropped to enclosing pixels, with internal overviews.
+It is north-up, cropped to the pixels enclosing the area, with internal overviews.
 satellite.png contains the same full-resolution pixels for easy viewing.
-Transparent pixels mark missing imagery or unfinished downloads.
+Transparent pixels mark missing imagery, unfinished downloads, or pixels outside the area.
 terrain.tif holds meters in EPSG:3857 (Int16 up to zoom 12, else Float32).
 Keep terrain/tiles/ for resume and offline export.
 mesh.glb is Google Earth's textured 3D mesh in meters, resting on y = 0.
@@ -105,23 +106,29 @@ def create_folder(run, parent):
     return folder
 
 
-def plan(client, area, options, progress):
+def tile_grid(mode, polygon, options):
+    """Satellite tiles meeting the polygon; terrain.tif needs every tile of the bounding box."""
+    return grid(polygon if mode == "satellite" else corners(extent(polygon)), options[f"{mode}_zoom"])
+
+
+def plan(client, polygon, options, progress):
+    """Plan a capture of a polygon of (lat, lon) points; a rectangle is its four corners."""
     options = settings(options)
     stages = []
     if "streetview" in options["include"]:
-        stages.append(streetview.plan(client, area, options, progress, allow_empty=len(options["include"]) > 1))
+        stages.append(streetview.plan(client, polygon, options, progress, allow_empty=len(options["include"]) > 1))
     if "satellite" in options["include"]:
-        stages.append(dict(mode="satellite", grid=grid(area, options["satellite_zoom"]), results=[]))
+        stages.append(dict(mode="satellite", grid=tile_grid("satellite", polygon, options), results=[]))
     if "osm" in options["include"]:
         stages.append(dict(mode="osm", results=[], notes=OSM_NOTES))
     if "terrain" in options["include"]:
-        stages.append(dict(mode="terrain", grid=grid(area, options["terrain_zoom"]), results=[], notes=TERRAIN_NOTES))
+        stages.append(dict(mode="terrain", grid=tile_grid("terrain", polygon, options), results=[], notes=TERRAIN_NOTES))
     if "mesh" in options["include"]:
-        stage = mesh.plan(client, area, options["mesh_level"], options["mesh_workers"], progress,
+        stage = mesh.plan(client, polygon, options["mesh_level"], options["mesh_workers"], progress,
                           allow_empty=len(options["include"]) > 1)
         stages.append(dict(stage, notes=MESH_NOTES))
-    return dict(format="aleph-python", version=FORMAT_VERSION, bounds=area, options=options,
-                started_at=now(), state="planned", stages=stages)
+    return dict(format="aleph-python", version=FORMAT_VERSION, polygon=[list(point) for point in polygon],
+                options=options, started_at=now(), state="planned", stages=stages)
 
 
 def total(stage):
@@ -131,7 +138,7 @@ def total(stage):
         return 1
     if stage["mode"] == "mesh":
         return len(stage["nodes"])
-    return stage["grid"]["rows"] * stage["grid"]["columns"]
+    return stage["grid"]["count"]
 
 
 def estimate(run):
@@ -173,37 +180,36 @@ def workers(options, kind):
     return 1 if options["delay"] or kind not in REQUEST_WORKERS else options[REQUEST_WORKERS[kind]]
 
 
-def planning(area, options):
+def planning(polygon, options):
     """Rough seconds that planning Street View and 3D mesh spends on requests, by mode.
 
-    Street View lists panoramas in every zoom-17 tile. 3D mesh lists octree nodes four levels at a
-    time, one level after another, from the nodes meeting the area; nodes at level n are about
-    2πR / 2^n wide, and measured counts run about twice that footprint as nodes stack up over terrain
-    and buildings. Excludes reading roads and the first download of a regional OSM file.
+    Street View lists panoramas in every zoom-17 tile meeting the polygon. 3D mesh lists octree nodes
+    four levels at a time, one level after another, from the nodes meeting the polygon; nodes at
+    level n are about s = 2πR / 2^n wide. A shape of area A and perimeter P meets about
+    A / s² + P / 2s + 1 of them, and measured counts run about twice that as nodes stack up over
+    terrain and buildings. Excludes reading roads and the first download of a regional OSM file.
     """
     result = {}
     if "streetview" in options["include"]:
-        g = grid(area, 17)
-        count = g["rows"] * g["columns"]
+        count = grid(polygon, 17)["count"]
         result["streetview"] = count * (REQUEST_SECONDS["coverage_tile"] / workers(options, "coverage_tile")
                                         + options["delay"])
     if "mesh" in options["include"]:
-        south, west, north, east = area
-        middle = (south + north) / 2
-        width, height = distance((middle, west), (middle, east)), distance((south, west), (north, west))
+        surface, perimeter = measure(polygon)
         seconds = 0
         for level in range(0, options["mesh_level"], 4):
             size = 2 * math.pi * RADIUS / 2**level
-            count = 1 if level == 0 else 2 * (width / size + 1) * (height / size + 1)
+            count = 1 if level == 0 else 2 * (surface / size**2 + perimeter / (2 * size) + 1)
             seconds += math.ceil(count / workers(options, "mesh_bulk")) * REQUEST_SECONDS["mesh_bulk"]
             seconds += count * options["delay"]
         result["mesh"] = seconds
     return {mode: math.ceil(seconds) for mode, seconds in result.items()}
 
 
-def resolution(area, zoom, tile_size=256):
+def resolution(polygon, zoom, tile_size=256):
     """Approximate ground meters per pixel at the middle of the area."""
-    latitude = math.radians((area[0] + area[2]) / 2)
+    south, _, north, _ = extent(polygon)
+    latitude = math.radians((south + north) / 2)
     return 2 * math.pi * MERCATOR_RADIUS * math.cos(latitude) / (tile_size * 2**zoom)
 
 
@@ -282,7 +288,7 @@ def capture_satellite(stage, run, folder, client, progress):
 
 
 def capture_osm(stage, run, folder, client, progress):
-    metadata = client.maps.export(run["bounds"], folder / "map.osm", progress)
+    metadata = client.maps.export(run["polygon"], folder / "map.osm", progress)
     stage["results"].append(dict(filename="map.osm", captured_at=now(), **metadata))
     yield
 
@@ -335,13 +341,13 @@ def export(run, folder, progress, *, rebuild=True):
         elif stage["mode"] == "satellite":
             write_json(folder / "satellite/patches.geojson",
                        collection(feature("Polygon", [tile_ring(p)], p) for p in stage["results"]))
-            satellite.merge(stage, folder, progress)
+            satellite.merge(stage, folder, progress, run["polygon"])
         elif stage["mode"] == "terrain":
             if len(stage["results"]) == total(stage) and (rebuild or not (folder / "terrain.tif").is_file()):
                 terrain.merge(folder / "terrain.tif", folder, stage["results"], stage["grid"], progress)
         elif stage["mode"] == "mesh":
             if len(stage["results"]) == total(stage) and (rebuild or not (folder / "mesh.glb").is_file()):
-                mesh.export(folder / "mesh.glb", folder, stage, run["bounds"], progress)
+                mesh.export(folder / "mesh.glb", folder, stage, run["polygon"], progress)
     run["exports_saved"] = True
     write_json(folder / "manifest.json", run)
 
@@ -351,7 +357,7 @@ def save_preview(run, folder):
     if set(run["options"]["include"]) <= {"osm", "terrain"}:
         return
     write_bytes(folder / "README.txt", README)
-    area = run["bounds"]
+    area = extent(run["polygon"])
     left, top = pixel((area[2], area[1]), 17)
     right, bottom = pixel((area[0], area[3]), 17)
     scale = min(850 / (right - left), 510 / (bottom - top))
@@ -363,6 +369,7 @@ def save_preview(run, folder):
     def corner(x, y, zoom):
         return xy(coordinate(x * 256, y * 256, zoom))
 
+    outline = "M" + "L".join(xy(p) for p in run["polygon"]) + "Z"
     for stage in run["stages"]:
         if stage["mode"] == "streetview":
             write_json(folder / "streetview/paths.geojson", collection(
@@ -380,14 +387,12 @@ def save_preview(run, folder):
             caption = "Planned stops. Dotted red lines show spacing gaps. North is up."
         elif stage["mode"] == "satellite":
             g = stage["grid"]
-            x0, y0, x1, y1, z = g["x0"], g["y0"], g["x0"] + g["columns"], g["y0"] + g["rows"], g["zoom"]
-            lines = [f"M{corner(x, y0, z)}L{corner(x, y1, z)}" for x in range(x0, x1 + 1)]
-            lines += [f"M{corner(x0, y, z)}L{corner(x1, y, z)}" for y in range(y0, y1 + 1)]
-            drawing = [f'<path d="{"".join(lines)}" stroke="#888" stroke-width="1"/>']
-            caption = f"Satellite zoom {g['zoom']}, {g['columns']} × {g['rows']} patches. North is up."
+            edges = "".join(f"M{corner(*a, g['zoom'])}L{corner(*b, g['zoom'])}" for a, b in lines(g))
+            drawing = [f'<path d="{edges}" stroke="#888" stroke-width="1"/>']
+            caption = f"Satellite zoom {g['zoom']}, {g['count']} patches. North is up."
         else:
             continue
-        drawing.append(f'<rect x="25" y="45" width="{(right - left) * scale}" height="{(bottom - top) * scale}" stroke="#a32632"/>')
+        drawing.append(f'<path d="{outline}" stroke="#a32632"/>')
         svg = (
             f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 580" role="img">'
             f'<title>{caption}</title><rect width="900" height="580" fill="#faf8f4"/>'
@@ -444,13 +449,13 @@ def load(folder, *, check_files=True):
     run = json.loads(contained(folder, "manifest.json").read_text(encoding="utf-8"))
     if run.get("format") != "aleph-python" or run.get("version") != FORMAT_VERSION:
         raise ValueError("Unsupported capture format. Start a new capture with this version of Aleph.")
-    bounds(run["bounds"], minimum=0)
+    vertices(run["polygon"], minimum=0)
     options = settings(run["options"])
     if [s["mode"] for s in run["stages"]] != options["include"]:
         raise ValueError("Invalid saved stages.")
     for stage in run["stages"]:
         if stage["mode"] in ("satellite", "terrain"):
-            if stage["grid"] != grid(run["bounds"], options[stage["mode"] + "_zoom"]):
+            if stage["grid"] != tile_grid(stage["mode"], run["polygon"], options):
                 raise ValueError("Invalid saved tile grid.")
         if stage["mode"] == "mesh" and stage["level"] != options["mesh_level"]:
             raise ValueError("Invalid saved mesh level.")

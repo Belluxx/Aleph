@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from src import capture, mesh
 from src.common import MissingImagery, write_bytes
+from src.geo import corners
 
 RADIUS = 6371010.0
 AREA = (-1e-4, -1e-4, 1e-4, 1e-4)  # About 22 m square around latitude 0, longitude 0.
@@ -95,7 +96,7 @@ class MeshTests(unittest.TestCase):
                      results=[dict(filename="0.bin"), dict(filename="01.bin"), dict(status="skipped"),
                               dict(filename="03.bin")])
         with patch.object(mesh, "TILES_PER_MESH", 2):
-            mesh.export(self.folder / "mesh.glb", self.folder, stage, AREA, Mock())
+            mesh.export(self.folder / "mesh.glb", self.folder, stage, corners(AREA), Mock())
 
         gltf, view = read_glb(self.folder / "mesh.glb")
         self.assertEqual(gltf["asset"]["extras"]["base"], 5)
@@ -114,7 +115,8 @@ class MeshTests(unittest.TestCase):
 
     def test_parallel_download_keeps_node_order_across_interrupt_and_resume(self):
         nodes = [[f"0{i:02d}", 1, None, 0] for i in range(20)]
-        run = dict(format="aleph-python", version=capture.FORMAT_VERSION, bounds=list(AREA),
+        run = dict(format="aleph-python", version=capture.FORMAT_VERSION,
+                   polygon=[list(point) for point in corners(AREA)],
                    options=capture.settings({"include": ["mesh"]}), started_at="", state="planned",
                    stages=[dict(mode="mesh", level=21, radius=RADIUS, nodes=nodes, results=[])])
 

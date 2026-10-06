@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 from .common import MissingImagery, fetch, number, open_image, save_image, url, write_bytes
-from .geo import Line, RoadIndex, clip, distance, grid, inside, tiles
+from .geo import Line, RoadIndex, distance, extent, grid, pieces, ring_contains, tiles
 
 EXCLUDED = re.compile(r"^(construction|proposed|planned|abandoned|razed|demolished)$")
 MAIN = r"(motorway|trunk|primary|secondary|tertiary)(_link)?"
@@ -61,10 +61,10 @@ def parse_coverage(data):
         raise ValueError("Unreadable Google panorama coverage; the endpoint may have changed.") from error
 
 
-def coverage(client, area, progress, workers):
-    """Every Google panorama listed in the zoom-17 tiles that cover the area."""
-    coverage_grid = grid(area, 17)
-    count = coverage_grid["rows"] * coverage_grid["columns"]
+def coverage(client, polygon, progress, workers):
+    """Every Google panorama listed in the zoom-17 tiles that meet the polygon."""
+    coverage_grid = grid(polygon, 17)
+    count = coverage_grid["count"]
     found = {}
     progress("Finding panoramas", 0, count)
     addresses = (url("https://www.google.com/maps/photometa/ac/v1",
@@ -180,8 +180,8 @@ def save_sphere(client, metadata, zoom, target, workers):
                 tile_count=columns * rows, source_url=metadata_url(metadata["pano_id"]))
 
 
-def roads(ways, area, depth):
-    """Clip mapped roads to the area, splitting them wherever they leave it or repeat an edge."""
+def roads(ways, polygon, depth):
+    """Clip mapped roads to the polygon, splitting them wherever they leave it or repeat an edge."""
     parts, seen_edges = [], set()
     for way in sorted(ways, key=lambda way: way["id"]):
         tags = way["tags"]
@@ -195,18 +195,19 @@ def roads(ways, area, depth):
         for i, (a, b) in enumerate(pairwise(points)):
             if distance(a, b) <= 0.01:
                 continue
-            segment = clip(a, b, area)
             edge = layer, tuple(sorted((nodes[i], nodes[i + 1])))
-            if segment is None or edge in seen_edges:
+            segments = [] if edge in seen_edges else pieces(a, b, polygon)
+            if not segments:
                 runs.append([])
                 continue
             seen_edges.add(edge)
-            if runs[-1] and distance(runs[-1][-1], segment[0]) > 0.01:
-                runs.append([])
-            if not runs[-1]:
-                runs[-1].append(segment[0])
-            runs[-1].append(segment[1])
-            if not inside(b, area):
+            for start, end in segments:
+                if runs[-1] and distance(runs[-1][-1], start) > 0.01:
+                    runs.append([])
+                if not runs[-1]:
+                    runs[-1].append(start)
+                runs[-1].append(end)
+            if segments[-1][1] != b:
                 runs.append([])
         for part, run in enumerate((run for run in runs if len(run) > 1), 1):
             parts.append(dict(id=f"way-{way['id']}-{part}", osm_id=way["id"], name=tags.get("name", ""),
@@ -282,14 +283,15 @@ def select_stops(candidates, spacing):
         index = following
 
 
-def plan(client, area, options, progress, *, allow_empty=False):
+def plan(client, polygon, options, progress, *, allow_empty=False):
     progress("Finding roads")
-    ways, metadata = client.maps.data(area, progress=progress)
-    parts = roads(ways, area, options["depth"])
+    ways, metadata = client.maps.data(extent(polygon), progress=progress)
+    parts = roads(ways, polygon, options["depth"])
     if not parts and not allow_empty:
         raise ValueError("No mapped roads at this path depth. Choose another area or depth.")
-    found = [view for view in coverage(client, area, progress, options["streetview_workers"])
-             if inside((view["lat"], view["lon"]), area)]
+    ring = [*polygon, polygon[0]]
+    found = [view for view in coverage(client, polygon, progress, options["streetview_workers"])
+             if ring_contains(ring, (view["lat"], view["lon"]))]
     progress("Indexing roads")
     lines = [Line(part["points"]) for part in parts]
     index = RoadIndex(lines)

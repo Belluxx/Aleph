@@ -25,19 +25,30 @@ class SatelliteTests(unittest.TestCase):
             with self.subTest(zoom=zoom, x=x, y=y):
                 north, west = geo.coordinate(x * 256, y * 256, zoom)
                 south, east = geo.coordinate((x + 1) * 256, (y + 1) * 256, zoom)
-                self.assertEqual(geo.grid((south, west, north, east), zoom), dict(
+                self.assertEqual(geo.grid(geo.corners((south, west, north, east)), zoom), dict(
                     zoom=zoom, left=x * 256, top=y * 256, width=256, height=256,
-                    x0=x, y0=y, columns=1, rows=1))
+                    x0=x, y0=y, columns=1, rows=1, spans=[[0, 0, 1, 0]], count=1))
 
         north, west = geo.coordinate(1024 - 0.01, 1280 - 0.01, 21)
         south, east = geo.coordinate(1280 + 0.01, 1536 + 0.01, 21)
-        self.assertEqual(geo.grid((south, west, north, east), 21), dict(
+        self.assertEqual(geo.grid(geo.corners((south, west, north, east)), 21), dict(
             zoom=21, left=1023, top=1279, width=258, height=258,
-            x0=3, y0=4, columns=3, rows=3))
+            x0=3, y0=4, columns=3, rows=3, spans=[[0, 0, 3, 0], [1, 0, 3, 3], [2, 0, 3, 6]], count=9))
+
+    def test_saved_tiles_follow_spans_with_gaps(self):
+        # Row 0 holds columns 0–2, row 1 none, and row 2 columns 0 and 2: tiles 0 to 4 in download order.
+        grid = dict(zoom=2, x0=0, y0=0, columns=3, rows=3, spans=[[0, 0, 3, 0], [2, 0, 1, 3], [2, 2, 3, 4]], count=5)
+        for count, z, x, y, expected in [(5, 2, 2, 2, 5), (4, 2, 2, 2, 0), (5, 2, 1, 2, 0), (5, 2, 1, 1, 0),
+                                         (5, 1, 0, 0, 2), (5, 1, 0, 1, 4), (3, 1, 0, 1, 0), (5, 1, 1, 1, 5),
+                                         (4, 0, 0, 0, 4), (2, 0, 0, 0, 2), (0, 0, 0, 0, 0)]:
+            with self.subTest(count=count, tile=(z, x, y)):
+                self.assertEqual(layers.saved(grid, count, z, x, y), expected)
 
     def test_partial_mosaic_crops_pixels_and_writes_georeferenced_overview(self):
         grid = dict(zoom=4, left=1027, top=1287, width=301, height=259,
-                    x0=4, y0=5, columns=2, rows=2)
+                    x0=4, y0=5, columns=2, rows=2, spans=[[0, 0, 2, 0], [1, 0, 2, 2]], count=4)
+        (north, west), (south, east) = geo.coordinate(1027, 1287, 4), geo.coordinate(1328, 1546, 4)
+        area = geo.corners((south, west, north, east))
         with TemporaryDirectory() as directory, Image.new("RGBA", (512, 512)) as canvas:
             folder = Path(directory)
             results = []
@@ -53,7 +64,7 @@ class SatelliteTests(unittest.TestCase):
                 # Force BigTIFF using a small file; never allocate gigabytes.
                 for limit, magic in ((2**32, b"II*\0"), (1, b"II+\0")):
                     with self.subTest(format=magic), patch("src.satellite.TIFF_LIMIT", limit):
-                        satellite.merge(stage, folder, quiet)
+                        satellite.merge(stage, folder, quiet, area)
                         self.assertEqual((folder / "satellite.tif").read_bytes()[:4], magic)
                         with Image.open(folder / "satellite.png") as png:
                             self.assertEqual(png.size, expected.size)

@@ -16,12 +16,14 @@ import tempfile
 import numpy as np
 
 from .common import atomic_path, fetch
+from .geo import extent, near, within
 from .pbf import fields, varints
 
 BASE = "https://kh.google.com/rt/earth/"
 LEAF, NODATA, USE_IMAGERY_EPOCH = 4, 8, 16
 JPEG = 1
 LOWEST, HIGHEST = -1000, 9000  # Heights searched for nodes, in meters from the sphere.
+NEAR = 100_000  # Largest node half-diagonal, in meters, checked against the polygon; larger ones always count.
 GLB_LIMIT = 2**32
 TILES_PER_MESH = 64  # Unreal's Nanite allows 64 materials per mesh; Godot allows 256 surfaces.
 
@@ -77,6 +79,18 @@ def overlaps(a, b):
     return all(abs(dot(d, x)) <= sum(h * abs(dot(r, x)) for h, r in zip(h1 + h2, r1 + r2)) for x in axes)
 
 
+def degrees(x, y, z):
+    """Latitude and longitude of planet coordinates, as numbers or arrays; frame() goes the other way."""
+    return np.degrees(np.arctan2(z, np.hypot(x, y))), np.degrees(np.arctan2(y, x))
+
+
+def reaches(polygon, box):
+    """Whether a node's box may hold ground in the polygon, judging by its center and half-diagonal."""
+    center, half, _ = box
+    size = math.hypot(*half)
+    return size > NEAR or near(polygon, degrees(*center), size * 1.05 + 1)
+
+
 def node_box(packed, head, texel):
     if len(packed) != 15:
         raise ValueError("Unexpected 3D mesh node bounds.")
@@ -118,12 +132,12 @@ def bulk(data, head, epoch):
         yield path, packed, node.get(2, epoch), node.get(5, epoch), node.get(7, imagery), box
 
 
-def plan(client, area, level, workers, progress, *, allow_empty=False):
-    """Nodes with data meeting the rectangle down to level, and the octants their children refine."""
+def plan(client, polygon, level, workers, progress, *, allow_empty=False):
+    """Nodes with data meeting the polygon down to level, and the octants their children refine."""
     planet = dict(fields(client.get(BASE + "PlanetoidMetadata")))
     root = dict(fields(planet[1]))
     radius = struct.unpack("<f", planet[2])[0]
-    target = search_box(area, radius)
+    target = search_box(extent(polygon), radius)
     found, existing = [], set()
     pending, done = [("", root.get(5, root[2]))], 0
     progress("Finding 3D mesh nodes", done)
@@ -142,7 +156,7 @@ def plan(client, area, level, workers, progress, *, allow_empty=False):
                     existing.add(path)
                 # Parents come first; skip subtrees outside the area.
                 if ((len(path) > len(head) + 1 and path[:-1] not in hit) or len(path) > level
-                        or box is None or not overlaps(target, box)):
+                        or box is None or not overlaps(target, box) or not reaches(polygon, box)):
                     continue
                 hit.add(path)
                 if not flags & NODATA:
@@ -266,24 +280,19 @@ def decode(data, mask, axes, radius, inside):
         yield positions, texcoords, indices, texture[1]
 
 
-def crop(area, axes, radius):
-    """A test for local east/north/up points inside the rectangle's latitudes and longitudes."""
-    south, west, north, east = (math.radians(value) for value in area)
+def crop(polygon, axes, radius):
+    """A test for local east/north/up points inside the polygon."""
     (ex, ey, ez), (nx, ny, nz), (ux, uy, uz) = axes
-    low, high = math.sin(south), math.sin(north)
-    west_x, west_y, east_x, east_y = -math.sin(west), math.cos(west), -math.sin(east), math.cos(east)
 
     def inside(e, n, u):
         r = radius + u
         x, y, z = ex * e + nx * n + ux * r, ey * e + ny * n + uy * r, ez * e + nz * n + uz * r
-        length = np.sqrt(x * x + y * y + z * z)
-        return ((low * length <= z) & (z <= high * length)
-                & (x * west_x + y * west_y >= 0) & (x * east_x + y * east_y <= 0))
+        return within(polygon, *degrees(x, y, z))
 
     return inside
 
 
-def export(path, folder, stage, area, progress):
+def export(path, folder, stage, polygon, progress):
     """Join saved nodes into one glTF binary in a local east/north/up frame around the center.
 
     Each glTF mesh holds up to TILES_PER_MESH textured tiles from one octree block, named after
@@ -291,9 +300,10 @@ def export(path, folder, stage, area, progress):
     """
     nodes, results = stage["nodes"], stage["results"]
     radius, block = stage["radius"], max(1, stage["level"] - 4)
+    area = extent(polygon)
     lat, lon = (area[0] + area[2]) / 2, (area[1] + area[3]) / 2
     axes = frame(lat, lon)
-    inside = crop(area, axes, radius)
+    inside = crop(polygon, axes, radius)
     # Keep parent octants whose child was unavailable, so gaps stay covered.
     missing = {node[0] for node, result in zip(nodes, results) if result.get("status") == "skipped"}
     saved = [(node, result["filename"]) for node, result in zip(nodes, results) if "filename" in result]

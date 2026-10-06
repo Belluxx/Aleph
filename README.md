@@ -13,7 +13,7 @@
 
 Aleph does two things:
 
-- Lets you draw a rectangle on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos, textured 3D models).
+- Lets you draw a rectangle or polygon on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos, textured 3D models).
 - Provides any of the above information for **specific points** on Earth, on the fly, via the CLI.
 
 This was born as a way to let LLMs quickly gather information from the physical world, but you can just use it to have piece of the Earth on your laptop and do whatever you want with it.
@@ -49,7 +49,7 @@ alephgeo --help
 alephgeo dashboard -o captures
 ```
 
-The dashboard opens in your browser at `http://127.0.0.1:8100`. Draw a rectangle on the map, choose the sources and their settings, check the preview and time estimate, then start the capture. Open any capture to show or hide each layer, or to explore its 3D mesh or terrain relief in 3D. Captures are saved in `captures`.
+The dashboard opens in your browser at `http://127.0.0.1:8100`. Draw a rectangle or polygon on the map, choose the sources and their settings, check the preview and time estimate, then start the capture. Open any capture to show or hide each layer, or to explore its 3D mesh or terrain relief in 3D. Captures are saved in `captures`.
 
 The basemap comes from [OpenFreeMap](https://openfreemap.org) and needs an internet connection.
 

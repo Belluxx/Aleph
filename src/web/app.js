@@ -105,12 +105,45 @@ function size([s, w, n, e]) {
   return [distance([middle, w], [middle, e]), distance([s, w], [n, w])];
 }
 
-const dimensions = area => size(area).map(meters).join(" × ");
-const ring = ([s, w, n, e]) => [[w, s], [e, s], [e, n], [w, n], [w, s]];
-const polygon = (area, properties = {}) => ({type: "Feature", properties, geometry: {type: "Polygon", coordinates: [ring(area)]}});
+// Areas are polygons of [lng, lat] points, without repeating the first, as the server sends and expects them.
+const corners = ([s, w, n, e]) => [[w, s], [e, s], [e, n], [w, n]];
+const extent = points => {
+  const lngs = points.map(p => p[0]), lats = points.map(p => p[1]);
+  return [Math.min(...lats), Math.min(...lngs), Math.max(...lats), Math.max(...lngs)];
+};
+const rectangle = points => points.length === 4 && new Set(points.map(p => p[0])).size === 2
+  && new Set(points.map(p => p[1])).size === 2;
+const polygon = (points, properties = {}) => ({type: "Feature", properties,
+  geometry: {type: "Polygon", coordinates: [[...points, points[0]]]}});
+const line = coordinates => ({type: "Feature", properties: {}, geometry: {type: "LineString", coordinates}});
 const point = (coordinates, properties = {}) => ({type: "Feature", properties, geometry: {type: "Point", coordinates}});
 const collection = features => ({type: "FeatureCollection", features});
 const lngLatBounds = ([s, w, n, e]) => [[w, s], [e, n]];
+
+// Ground area in square meters, flattened around the middle latitude.
+function surface(points) {
+  const r = Math.PI / 180, [s, , n] = extent(points);
+  const twice = points.reduce((sum, [x1, y1], i) => {
+    const [x2, y2] = points[(i + 1) % points.length];
+    return sum + x1 * y2 - x2 * y1;
+  }, 0);
+  return Math.abs(twice) / 2 * (EARTH * r) ** 2 * Math.cos((s + n) / 2 * r);
+}
+
+function dimensions(points) {
+  if (rectangle(points)) return size(extent(points)).map(meters).join(" × ");
+  const area = surface(points);
+  return `${area >= 1e5 ? `${(area / 1e6).toFixed(area >= 1e7 ? 0 : area >= 1e6 ? 1 : 2)} km²`
+    : `${Math.round(area).toLocaleString("en-US")} m²`} polygon`;
+}
+
+// Whether two edges cross, which the server refuses.
+function tangled(points) {
+  const side = (a, b, c) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+  const edges = points.map((p, i) => [p, points[(i + 1) % points.length]]);
+  return edges.some(([a, b], i) => edges.slice(i + 2, edges.length - (i === 0)).some(([c, d]) =>
+    side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0));
+}
 
 function when(iso) {
   const date = new Date(iso);
@@ -133,8 +166,11 @@ const state = {
   captures: [],
   job: null,
   view: null,
-  area: null,
+  area: null,  // Polygon of [lng, lat] points.
+  tool: store.get("tool", "rectangle") === "polygon" ? "polygon" : "rectangle",
   drawing: false,
+  sketch: null,  // Points of a polygon being drawn.
+  cursor: null,
   drag: null,
   preview: null,
   planError: null,
@@ -299,7 +335,7 @@ function visibleLayers() {
   const add = (...ids) => ids.forEach(id => on.add(id));
   if (state.view === "library") add("outlines", "outlines-fill");
   if (state.view === "new" || state.view === "preview") add("area-fill", "area-line");
-  if (state.view === "new" && state.area && !state.drawing) add("corners");
+  if (state.view === "new" && (state.sketch?.length || state.area && !state.drawing)) add("corners");
   if (state.view === "preview" && state.preview) add("plan-grid", "plan-terrain", "plan-paths", "plan-gaps", "plan-stops");
   if (state.view === "capture") {
     for (const [group, ids] of Object.entries(GROUPS)) if (state.toggles[group]) add(...ids);
@@ -527,30 +563,39 @@ async function syncSolid() {
 
 // Area drawing
 
+const HINTS = {rectangle: "Drag to draw the capture area, or press Esc to pan instead",
+               polygon: "Click to add points, then click the first one or double-click to finish"};
+const clampLngLat = ([lng, lat]) => [Math.max(-180, Math.min(180, lng)), Math.max(-85.05, Math.min(85.05, lat))];
+
 function setArea(area) {
   state.area = area;
-  setData("area", area ? collection([polygon(area)]) : EMPTY);
-  setData("corners", area ? collection(ring(area).slice(0, 4).map(c => point(c))) : EMPTY);
+  showArea();
   renderArea();
 }
 
-function areaFrom(a, b) {
-  const clampLat = value => Math.max(-85.05, Math.min(85.05, value));
-  const clampLon = value => Math.max(-180, Math.min(180, value));
-  return [clampLat(Math.min(a.lat, b.lat)), clampLon(Math.min(a.lng, b.lng)),
-          clampLat(Math.max(a.lat, b.lat)), clampLon(Math.max(a.lng, b.lng))];
+// The area, or the polygon being drawn with a line to the pointer.
+function showArea() {
+  const {sketch, area} = state;
+  if (sketch?.length) {
+    setData("area", collection([line(state.cursor ? [...sketch, state.cursor] : sketch)]));
+    setData("corners", collection(sketch.map(c => point(c))));
+  } else {
+    setData("area", area ? collection([polygon(area)]) : EMPTY);
+    setData("corners", area ? collection(area.map(c => point(c))) : EMPTY);
+  }
 }
 
-function cornerAt(pixel) {
-  if (!state.area) return null;
-  const corners = ring(state.area).slice(0, 4);
-  const index = corners.findIndex(corner => {
-    const p = map.project(corner);
+function rectangleFrom(a, b) {
+  const [lng1, lat1] = clampLngLat(a), [lng2, lat2] = clampLngLat(b);
+  return corners([Math.min(lat1, lat2), Math.min(lng1, lng2), Math.max(lat1, lat2), Math.max(lng1, lng2)]);
+}
+
+// Index of the point under the pointer, or -1.
+function pointAt(pixel, points = state.area ?? []) {
+  return points.findIndex(c => {
+    const p = map.project(c);
     return Math.abs(p.x - pixel.x) <= 9 && Math.abs(p.y - pixel.y) <= 9;
   });
-  if (index < 0) return null;
-  const [lng, lat] = corners[(index + 2) % 4];
-  return {index, anchor: {lng, lat}};
 }
 
 function hint(text) {
@@ -560,39 +605,85 @@ function hint(text) {
 
 function setDrawing(on) {
   state.drawing = on;
-  hint(on ? "Drag to draw the capture area, or press Esc to pan instead" : "");
+  state.sketch = on && state.tool === "polygon" ? [] : null;
+  state.cursor = null;
+  hint(on ? HINTS[state.tool] : "");
   map.getCanvas().style.cursor = on ? "crosshair" : "";
+  showArea();
   renderArea();
   syncMap();
 }
 
+function setTool(tool) {
+  state.tool = tool;
+  store.set("tool", tool);
+  setDrawing(true);
+}
+
+// Polygon points come from clicks, so the map still pans while drawing one.
+function addPoint(event) {
+  const sketch = state.sketch;
+  if (state.view !== "new" || !sketch) return;
+  if (sketch.length >= 3 && pointAt(event.point, sketch) === 0) return finishSketch();
+  if (pointAt(event.point, sketch.slice(-1)) === 0) return;  // The second click of a double-click.
+  sketch.push(clampLngLat(event.lngLat.toArray()));
+  showArea();
+  syncMap();
+}
+
+function removePoint() {
+  state.sketch.pop();
+  showArea();
+  syncMap();
+}
+
+function finishSketch() {
+  const sketch = state.sketch;
+  if (!sketch || sketch.length < 3) return;
+  state.sketch = null;
+  setArea(sketch);
+  setDrawing(false);
+  estimate();
+}
+
 function startDrag(event) {
-  if (state.view !== "new" || event.originalEvent.button !== 0) return;
-  const corner = state.drawing ? null : cornerAt(event.point);
-  if (!state.drawing && !corner) return;
+  if (state.view !== "new" || event.originalEvent.button !== 0 || state.sketch) return;
+  const index = state.drawing ? -1 : pointAt(event.point);
+  if (!state.drawing && index < 0) return;
   event.preventDefault();  // Keeps the map from panning.
-  state.drag = {anchor: corner ? corner.anchor : event.lngLat, previous: state.area};
+  // Rectangles are drawn and resized from the opposite corner; polygon points move on their own.
+  const area = state.area;
+  const anchor = index < 0 ? event.lngLat.toArray() : rectangle(area) ? area[(index + 2) % 4] : null;
+  state.drag = {anchor, index, previous: area};
 }
 
 function moveDrag(event) {
-  if (state.drag) return setArea(areaFrom(state.drag.anchor, event.lngLat));
-  if (state.view === "new" && !state.drawing) {
-    const corner = cornerAt(event.point);
-    map.getCanvas().style.cursor = corner ? (corner.index % 2 ? "nwse-resize" : "nesw-resize") : "";
+  const drag = state.drag, at = event.lngLat.toArray();
+  if (drag?.anchor) return setArea(rectangleFrom(drag.anchor, at));
+  if (drag) return setArea(drag.previous.with(drag.index, clampLngLat(at)));
+  if (state.view !== "new") return;
+  if (state.sketch) {
+    state.cursor = at;
+    const closing = state.sketch.length >= 3 && pointAt(event.point, state.sketch) === 0;
+    map.getCanvas().style.cursor = closing ? "pointer" : "crosshair";
+    showArea();
+  } else if (!state.drawing) {
+    const index = pointAt(event.point);
+    map.getCanvas().style.cursor = index < 0 ? "" : !rectangle(state.area) ? "move"
+      : index % 2 ? "nwse-resize" : "nesw-resize";
   }
 }
 
 function endDrag() {
-  if (!state.drag) return;
-  const {previous} = state.drag;
+  const drag = state.drag;
+  if (!drag) return;
   state.drag = null;
-  const [width, height] = state.area ? size(state.area) : [0, 0];
-  if (width < 5 || height < 5) {
-    setArea(previous);  // A click, not a drag.
-    return;
+  if (drag.anchor) {
+    const [width, height] = state.area ? size(extent(state.area)) : [0, 0];
+    if (width < 5 || height < 5) return setArea(drag.previous);  // A click, not a drag.
+    setDrawing(false);
   }
-  setDrawing(false);
-  estimate();
+  if (state.area !== drag.previous) estimate();
 }
 
 // Settings
@@ -603,6 +694,7 @@ function fillForm(options) {
     if (!name) continue;
     if (name === "include") input.checked = options.include.includes(input.value);
     else if (name === "camera") input.checked = (input.value === "sphere") === options.full_sphere;
+    else if (name === "shape") input.checked = input.value === state.tool;
     else if (input.type === "radio") input.checked = String(options[name]) === input.value;
     else if (name in CHOICES) input.value = CHOICES[name].findLastIndex(value => value <= options[name]);
     else if (name in options) input.value = options[name];
@@ -643,9 +735,10 @@ function placeTag(range) {
 }
 
 function renderPreviewButton() {
-  const button = $("#preview-button"), sources = readForm().include.length;
-  button.disabled = !state.area || !sources;
-  button.textContent = !sources ? "Select one or more sources first" : !state.area ? "Draw an area first" : "Preview";
+  const button = $("#preview-button"), sources = readForm().include.length, crossed = state.area && tangled(state.area);
+  button.disabled = !state.area || !sources || crossed;
+  button.textContent = !sources ? "Select one or more sources first" : !state.area ? "Draw an area first"
+    : crossed ? "Move points so edges do not cross" : "Preview";
 }
 
 let estimateTimer = null;
@@ -655,9 +748,9 @@ let estimateCount = 0;
 async function fetchEstimate() {
   const {include, satellite_zoom, terrain_zoom, mesh_level, streetview_workers, satellite_workers, terrain_workers,
          mesh_workers, delay} = readForm();
-  if (!state.area || include.every(mode => mode === "osm")) return {};
+  if (!state.area || tangled(state.area) || include.every(mode => mode === "osm")) return {};
   try {
-    return await api("/api/estimate", {bounds: state.area, options: {include, satellite_zoom, terrain_zoom, mesh_level,
+    return await api("/api/estimate", {polygon: state.area, options: {include, satellite_zoom, terrain_zoom, mesh_level,
       streetview_workers, satellite_workers, terrain_workers, mesh_workers, delay}});
   } catch {
     return {};  // Invalid values are reported by Preview.
@@ -690,8 +783,9 @@ function estimate() {
 function renderArea() {
   const area = state.area;
   $("#redraw").innerHTML = state.drawing ? "Cancel" : `${icon("pencil")}${area ? "Redraw" : "Draw area"}`;
+  const drawing = state.tool === "polygon" ? "Click on the map to add points." : "Drag on the map to draw it.";
   $("#area").innerHTML = area ? `<strong>${esc(dimensions(area))}</strong>`
-    : `<span class="muted">${state.drawing ? "Drag on the map to draw it." : "No area yet."}</span>`;
+    : `<span class="muted">${state.drawing ? drawing : "No area yet."}</span>`;
   renderPreviewButton();
 }
 
@@ -724,7 +818,7 @@ async function loadCaptures() {
     $("#captures").innerHTML = `<li class="empty error">${esc(error.message)}</li>`;
     return;
   }
-  setData("outlines", collection(state.captures.filter(c => c.bounds).map(c => polygon(c.bounds, {id: c.id}))));
+  setData("outlines", collection(state.captures.filter(c => c.polygon).map(c => polygon(c.polygon, {id: c.id}))));
   renderLibrary();
 }
 
@@ -736,7 +830,7 @@ function renderLibrary() {
     return;
   }
   list.innerHTML = state.captures.map(c => {
-    if (!c.bounds) {
+    if (!c.polygon) {
       return `<li><div class="capture"><span class="when">${esc(c.id)}</span><span class="state failed">${STATES[c.state]}</span>
         <span class="detail">${esc(c.error)}</span></div></li>`;
     }
@@ -745,7 +839,7 @@ function renderLibrary() {
     const status = live ? "running" : c.state;
     return `<li><button type="button" class="capture" data-id="${esc(c.id)}">
       <span class="when">${esc(when(c.started_at))}</span><span class="state ${status}">${STATES[status]}</span>
-      <span class="detail">${esc(c.options.include.map(s => NAMES[s]).join(", "))} (${esc(dimensions(c.bounds))})</span>${bar}
+      <span class="detail">${esc(c.options.include.map(s => NAMES[s]).join(", "))} (${esc(dimensions(c.polygon))})</span>${bar}
     </button></li>`;
   }).join("");
 }
@@ -807,7 +901,7 @@ async function previewPlan(event) {
   Object.assign(state, {preview: null, planError: null});
   setData("plan", EMPTY);
   try {
-    state.job = await api("/api/plan", {bounds: state.area, options: readForm()});
+    state.job = await api("/api/plan", {polygon: state.area, options: readForm()});
     state.watched = state.job.id;
   } catch (failure) {
     error.textContent = failure.message;
@@ -893,7 +987,7 @@ async function openCapture(id) {
   const first = state.capture?.id !== id;
   state.capture = detail;
   if (first) {
-    setData("bounds", collection([polygon(detail.bounds)]));
+    setData("bounds", collection([polygon(detail.polygon)]));
     setData("plan", absolute(capturePath(id, "/plan")));
     map.fitBounds(lngLatBounds(detail.bounds), {padding: 60, maxZoom: 18, duration: 600});
   }
@@ -955,7 +1049,7 @@ function renderCapture() {
   const live = running("capture", c.id);
   const status = live ? "running" : c.state;
   $("#capture-title").textContent = when(c.started_at);
-  $("#capture-meta").textContent = `${STATES[status]}: ${dimensions(c.bounds)}`;
+  $("#capture-meta").textContent = `${STATES[status]}: ${dimensions(c.polygon)}`;
   $("#progress").hidden = !live;
   if (live) {
     const downloadPhase = DOWNLOADS.has(job.phase) && !job.stopping;
@@ -1051,8 +1145,7 @@ function showPhoto(index) {
   $("#viewer").hidden = false;
   const at = photo.geometry.coordinates;
   const features = [point(at)];
-  if (p.heading != null) features.unshift({type: "Feature", properties: {},
-    geometry: {type: "LineString", coordinates: [at, destination(at, p.heading, 18)]}});
+  if (p.heading != null) features.unshift(line([at, destination(at, p.heading, 18)]));
   setData("selected", collection(features));
   if (!map.getBounds().contains(at)) map.easeTo({center: at});
 }
@@ -1172,6 +1265,7 @@ function bind() {
     estimate();
   });
   $("#settings").addEventListener("submit", previewPlan);
+  $("#settings").addEventListener("change", event => { if (event.target.name === "shape") setTool(event.target.value); });
   $("#redraw").addEventListener("click", () => setDrawing(!state.drawing));
 
   $("#preview-back").addEventListener("click", async () => {
@@ -1275,6 +1369,10 @@ function bind() {
       if (state.drawing && !state.drag) setDrawing(false);
       else if (!results.hidden) results.hidden = true;
       else if (!$("#viewer").hidden) closeViewer();
+    } else if (state.sketch && event.key === "Enter") {
+      finishSketch();
+    } else if (state.sketch?.length && event.key === "Backspace") {
+      removePoint();
     } else if (!$("#viewer").hidden && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       showPhoto(state.selected + (event.key === "ArrowLeft" ? -1 : 1));
     }
@@ -1289,6 +1387,12 @@ function bindMap() {
   map.on("mousedown", startOrbit);
   map.on("mousemove", moveDrag);
   map.on("mouseup", endDrag);
+  map.on("click", addPoint);
+  map.on("dblclick", event => {
+    if (!state.sketch) return;
+    event.preventDefault();  // Finishes the polygon instead of zooming.
+    finishSketch();
+  });
   map.on("click", "photos", event => {
     const sequence = event.features[0].properties.sequence;
     showPhoto(state.photos.findIndex(photo => photo.properties.sequence === sequence));
@@ -1352,12 +1456,8 @@ async function init() {
   if (state.job?.state === "running") poll();
   if (!store.get("view", null) && state.view === "library") {
     await loadCaptures();
-    const bounds = state.captures.filter(c => c.bounds).map(c => c.bounds);
-    if (bounds.length) {
-      map.fitBounds(lngLatBounds([Math.min(...bounds.map(b => b[0])), Math.min(...bounds.map(b => b[1])),
-                                  Math.max(...bounds.map(b => b[2])), Math.max(...bounds.map(b => b[3]))]),
-                    {padding: 80, maxZoom: 16, duration: 0});
-    }
+    const points = state.captures.filter(c => c.polygon).flatMap(c => c.polygon);
+    if (points.length) map.fitBounds(lngLatBounds(extent(points)), {padding: 80, maxZoom: 16, duration: 0});
   }
 }
 

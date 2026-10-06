@@ -5,11 +5,15 @@ from bisect import bisect_right
 from collections import defaultdict
 from itertools import pairwise
 
+import numpy as np
+
 from .common import number, positive
 
 RADIUS = 6_371_008.8
 MERCATOR_RADIUS = 6_378_137
 MAX_LATITUDE = 85.0511287798066
+MAX_VERTICES = 1000
+DETAILED_GRID = 64  # Rows and columns up to which lines() draws every tile.
 
 
 def clamp(value, low, high):
@@ -73,12 +77,112 @@ def bounds(values, *, minimum=1):
     if not (-90 <= south <= north <= 90 and -180 <= west <= east <= 180):
         raise ValueError("Use latitude −90…90 and longitude −180…180.")
     if east - west > 180:
-        raise ValueError("Split areas crossing the date line into two rectangles.")
+        raise ValueError("Split areas crossing the date line in two.")
     middle = (south + north) / 2
     size = min(distance((middle, west), (middle, east)), distance((south, west), (north, west)))
     if size <= 0 or size < minimum:
-        raise ValueError(f"The rectangle must be nonempty and at least {minimum} meter(s) wide and high.")
+        raise ValueError(f"The area must be nonempty and at least {minimum} meter(s) wide and high.")
     return south, west, north, east
+
+
+def corners(area):
+    """A rectangle as a polygon, counterclockwise from its southwest corner."""
+    south, west, north, east = area
+    return [(south, west), (south, east), (north, east), (north, west)]
+
+
+def crosses(a, b, c, d):
+    """Whether segments a–b and c–d cross at a point inside both."""
+    def side(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    return side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0
+
+
+def vertices(values, *, minimum=1):
+    """A simple polygon of (lat, lon) points, without repeating the first one at the end."""
+    polygon = []
+    for value in values:
+        vertex = point(value)
+        if not polygon or vertex != polygon[-1]:
+            polygon.append(vertex)
+    if len(polygon) > 1 and polygon[0] == polygon[-1]:
+        polygon.pop()
+    if not 3 <= len(polygon) <= MAX_VERTICES:
+        raise ValueError(f"A polygon needs 3 to {MAX_VERTICES} distinct points.")
+    bounds(extent(polygon), minimum=minimum)
+    ring = [*polygon, polygon[0]]
+    sides = list(pairwise(ring))
+    for i, (a, b) in enumerate(sides):
+        # Neighbors share a point, including the last and first sides.
+        for c, d in sides[i + 2:len(sides) - (i == 0)]:
+            if crosses(a, b, c, d):
+                raise ValueError("The polygon's edges must not cross.")
+    if not signed_area(ring):
+        raise ValueError("The polygon must enclose an area.")
+    return polygon
+
+
+def within(polygon, lats, lons):
+    """ring_contains for arrays of latitudes and longitudes."""
+    inside = np.zeros(np.shape(lats), bool)
+    for (alat, alon), (blat, blon) in pairwise([*polygon, polygon[0]]):
+        if alat != blat:
+            inside ^= ((alat > lats) != (blat > lats)) & (lons < alon + (lats - alat) * (blon - alon) / (blat - alat))
+    return inside
+
+
+def pieces(a, b, polygon):
+    """Parts of segment a–b inside the polygon, in order from a."""
+    ring = [*polygon, polygon[0]]
+    dlat, dlon = b[0] - a[0], b[1] - a[1]
+    cuts = [0, 1]
+    for c, d in pairwise(ring):
+        elat, elon = d[0] - c[0], d[1] - c[1]
+        if denominator := dlat * elon - dlon * elat:
+            t = ((c[0] - a[0]) * elon - (c[1] - a[1]) * elat) / denominator
+            u = ((c[0] - a[0]) * dlon - (c[1] - a[1]) * dlat) / denominator
+            if 0 < t < 1 and 0 <= u <= 1:
+                cuts.append(t)
+
+    def at(t):
+        return a if t == 0 else b if t == 1 else (a[0] + t * dlat, a[1] + t * dlon)
+
+    parts = []
+    for start, end in pairwise(sorted(cuts)):
+        if start < end and ring_contains(ring, at((start + end) / 2)):
+            if parts and parts[-1][1] == start:
+                parts[-1][1] = end
+            else:
+                parts.append([start, end])
+    return [(at(start), at(end)) for start, end in parts if distance(at(start), at(end)) > 0.01]
+
+
+def offset(point, origin):
+    """Meters east and north of a nearby origin, on a plane."""
+    scale = math.radians(RADIUS)
+    return (((point[1] - origin[1] + 180) % 360 - 180) * scale * math.cos(math.radians(origin[0])),
+            (point[0] - origin[0]) * scale)
+
+
+def near(polygon, point, meters):
+    """Whether a point lies inside the polygon or within a short distance of its edges."""
+    ring = [*polygon, polygon[0]]
+    if ring_contains(ring, point):
+        return True
+    for (ax, ay), (bx, by) in pairwise([offset(p, point) for p in ring]):
+        dx, dy = bx - ax, by - ay
+        t = clamp(-(ax * dx + ay * dy) / (dx * dx + dy * dy), 0, 1) if dx or dy else 0
+        if math.hypot(ax + t * dx, ay + t * dy) <= meters:
+            return True
+    return False
+
+
+def measure(polygon):
+    """Approximate ground area in square meters and perimeter in meters."""
+    origin = sum(p[0] for p in polygon) / len(polygon), polygon[0][1]
+    ring = [offset(p, origin) for p in [*polygon, polygon[0]]]
+    return abs(signed_area(ring)), sum(math.dist(a, b) for a, b in pairwise(ring))
 
 
 def around(center, size):
@@ -92,11 +196,6 @@ def around(center, size):
     if lon - dx < -180 or lon + dx > 180:
         raise ValueError("Split areas crossing the date line into two rectangles.")
     return bounds((lat - dy, lon - dx, lat + dy, lon + dx), minimum=0)
-
-
-def inside(point, area):
-    south, west, north, east = area
-    return south - 1e-9 <= point[0] <= north + 1e-9 and west - 1e-9 <= point[1] <= east + 1e-9
 
 
 def clip(a, b, area):
@@ -198,8 +297,12 @@ def coordinate(x, y, zoom):
     return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / size)))), x / size * 360 - 180
 
 
-def grid(area, zoom):
-    south, west, north, east = area
+def grid(polygon, zoom):
+    """Tiles meeting the polygon and the pixels enclosing it; a rectangle meets every tile of its grid.
+
+    Spans list those tiles in download order: [row, first column, column after the last, tiles in earlier spans].
+    """
+    south, west, north, east = extent(polygon)
     if south < -MAX_LATITUDE or north > MAX_LATITUDE:
         raise ValueError("Imagery areas must stay within latitudes −85.0511…85.0511.")
 
@@ -211,15 +314,71 @@ def grid(area, zoom):
 
     left, top = (math.floor(snap(v)) for v in pixel((north, west), zoom))
     right, bottom = (math.ceil(snap(v)) for v in pixel((south, east), zoom))
+    x0, y0 = left // 256, top // 256
+    columns, rows = math.ceil(right / 256) - x0, math.ceil(bottom / 256) - y0
+    points = [tuple(snap(v) / 256 - origin for v, origin in zip(pixel(p, zoom), (x0, y0))) for p in polygon]
+    spans, count = [], 0
+    for row in range(rows):
+        for start, end in meeting(points, row, columns):
+            spans.append([row, start, end, count])
+            count += end - start
     return dict(zoom=zoom, left=left, top=top, width=right - left, height=bottom - top,
-                x0=left // 256, y0=top // 256,
-                columns=math.ceil(right / 256) - left // 256, rows=math.ceil(bottom / 256) - top // 256)
+                x0=x0, y0=y0, columns=columns, rows=rows, spans=spans, count=count)
+
+
+def meeting(points, row, columns):
+    """Column ranges of a row's tiles that meet a polygon in tile units, ignoring touches along tile edges."""
+    ranges, crossings = [], []
+    for (ax, ay), (bx, by) in pairwise([*points, points[0]]):
+        # Part of the edge within the row.
+        if ay == by:
+            if row < ay < row + 1:
+                ranges.append((min(ax, bx), max(ax, bx)))
+            continue
+        low, high = sorted(((row - ay) / (by - ay), (row + 1 - ay) / (by - ay)))
+        low, high = max(low, 0), min(high, 1)
+        if low < high:
+            ranges.append(tuple(sorted((ax + low * (bx - ax), ax + high * (bx - ax)))))
+        # Tiles with no edges inside lie between edges crossing the row's middle.
+        if (ay > row + 0.5) != (by > row + 0.5):
+            crossings.append(ax + (row + 0.5 - ay) * (bx - ax) / (by - ay))
+    crossings.sort()
+    ranges += zip(crossings[::2], crossings[1::2])
+    runs = []
+    for start, end in sorted((max(math.floor(low), 0), min(math.ceil(high), columns)) for low, high in ranges):
+        if start >= end:
+            continue
+        if runs and start <= runs[-1][1]:
+            runs[-1] = runs[-1][0], max(end, runs[-1][1])
+        else:
+            runs.append((start, end))
+    return runs
 
 
 def tiles(grid):
-    for row in range(grid["rows"]):
-        for column in range(grid["columns"]):
+    for row, start, end, _ in grid["spans"]:
+        for column in range(start, end):
             yield dict(x=grid["x0"] + column, y=grid["y0"] + row, zoom=grid["zoom"], row=row, column=column)
+
+
+def lines(grid):
+    """Edges of a grid's tiles as ((x, y), (x, y)) in tile units, or just their outline for large grids."""
+    detailed = grid["rows"] <= DETAILED_GRID and grid["columns"] <= DETAILED_GRID
+    x0, y0 = grid["x0"], grid["y0"]
+    rows = [[] for _ in range(grid["rows"] + 2)]  # Empty rows above and below.
+    segments = []
+    for row, start, end, _ in grid["spans"]:
+        rows[row + 1].append((start, end))
+        for column in range(start, end + 1) if detailed else (start, end):
+            segments.append(((x0 + column, y0 + row), (x0 + column, y0 + row + 1)))
+    for row, (above, below) in enumerate(pairwise(rows)):
+        # Every tile's top and bottom, or only where coverage changes between rows.
+        ends = sorted({x for run in above + below for x in run})
+        for low, high in pairwise(ends):
+            depth = sum(start <= low < end for start, end in above + below)
+            if depth == 1 or detailed and depth:
+                segments.append(((x0 + low, y0 + row), (x0 + high, y0 + row)))
+    return segments
 
 
 def tile_ring(tile):

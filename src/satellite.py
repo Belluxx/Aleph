@@ -12,10 +12,10 @@ import tempfile
 import zlib
 from array import array
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
 from .common import atomic_path, contained
-from .geo import MERCATOR_RADIUS
+from .geo import MERCATOR_RADIUS, pixel, tiles
 
 BLOCK = 256
 TIFF_LIMIT = 2**32
@@ -163,8 +163,16 @@ def write_png(path, level, spool, progress):
         chunk(b"IEND", b"")
 
 
-def merge(stage, folder, progress):
-    """Write satellite.tif and satellite.png, retaining transparent gaps."""
+def clear(image, outline):
+    """Make pixels outside a polygon in image pixels transparent, keeping those its edges pass through."""
+    with Image.new("L", image.size) as inside:
+        ImageDraw.Draw(inside).polygon(outline, fill=255, outline=255)
+        with image.getchannel("A") as alpha, ImageChops.multiply(alpha, inside) as kept:
+            image.putalpha(kept)
+
+
+def merge(stage, folder, progress, polygon):
+    """Write satellite.tif and satellite.png, retaining transparent gaps and clearing pixels outside the polygon."""
     grid = stage["grid"]
     levels = [Level(grid["width"], grid["height"])]
     while max(levels[-1].width, levels[-1].height) > BLOCK:
@@ -174,14 +182,17 @@ def merge(stage, folder, progress):
     done = 0
     progress("Building satellite.tif", done, count)
 
-    def source(x, y):
-        index = (y - grid["y0"]) * grid["columns"] + x - grid["x0"]
-        if index >= len(stage["results"]):
-            return Image.new("RGBA", (BLOCK, BLOCK))
-        tile = stage["results"][index]
-        if (tile["x"], tile["y"], tile["zoom"]) != (x, y, grid["zoom"]):
+    saved = {}
+    for planned, tile in zip(tiles(grid), stage["results"]):
+        if (tile["x"], tile["y"], tile["zoom"]) != (planned["x"], planned["y"], grid["zoom"]):
             raise ValueError("Invalid saved satellite tile order.")
-        with Image.open(contained(folder, tile["filename"])) as image:
+        saved[tile["x"], tile["y"]] = tile["filename"]
+    outline = [(x - grid["left"], y - grid["top"]) for x, y in (pixel(point, grid["zoom"]) for point in polygon)]
+
+    def source(x, y):
+        if (x, y) not in saved:
+            return Image.new("RGBA", (BLOCK, BLOCK))
+        with Image.open(contained(folder, saved[x, y])) as image:
             if image.format not in ("JPEG", "PNG") or image.size != (BLOCK, BLOCK):
                 raise ValueError("Expected a 256 × 256 satellite JPEG or PNG.")
             return image.convert("RGBA")
@@ -198,6 +209,7 @@ def merge(stage, folder, progress):
                     if i == 0:
                         left, top = grid["left"] + x, grid["top"] + y
                         with region((left, top, left + width, top + height), source) as image:
+                            clear(image, [(u - x, v - y) for u, v in outline])
                             level.write(spool, image)
                     else:
                         previous = levels[i - 1]

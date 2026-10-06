@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from src import pbf
+from src.geo import corners
 
 
 def uint(value):
@@ -106,7 +107,7 @@ class PBFTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             source, target = Path(directory) / "region.pbf", Path(directory) / "map.osm"
             source.write_bytes(snapshot)
-            pbf.PBF(source).export((-0.1, -0.1, 0.1, 0.1), target)
+            pbf.PBF(source).export(corners((-0.1, -0.1, 0.1, 0.1)), target)
             root = ET.parse(target).getroot()
         self.assertEqual([int(n.get("id")) for n in root.findall("node")], list(range(1, 8)))
         self.assertEqual([w.get("id") for w in root.findall("way")], ["10", "20", "30"])

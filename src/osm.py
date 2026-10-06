@@ -83,10 +83,11 @@ class Source:
             self.regions[url] = path, dict(source_url=url, region=props["name"], osm_data_at=stamp or None)
         return self.regions[url]
 
-    def export(self, area, output, progress):
+    def export(self, polygon, output, progress):
+        area = extent(polygon)
         source, metadata = self.region(area, progress)
         progress("Extracting OSM map")
-        PBF(source, self.client.check_cancel).export(area, output)
+        PBF(source, self.client.check_cancel).export(polygon, output)
         return metadata
 
     def data(self, area, *, poi=False, progress=lambda *args: None):

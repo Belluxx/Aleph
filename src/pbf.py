@@ -23,6 +23,7 @@ from xml.sax.saxutils import quoteattr
 import numpy as np
 
 from .common import atomic_path
+from .geo import extent, within
 
 MAX_BLOB = 32 * 1024 * 1024
 MEMBERS = ("node", "way", "relation")
@@ -196,7 +197,7 @@ def dense(message):
 
 
 def scan_nodes(task):
-    path, entry, area, retain = task
+    path, entry, area, polygon, retain = task
     values, groups = block(path, entry)
     gran = values.get(17, 100)
     lat_offset, lon_offset = signed64(values.get(19, 0)), signed64(values.get(20, 0))
@@ -229,6 +230,9 @@ def scan_nodes(task):
                 last = int(ids[-1])
                 if area is not None:
                     inside = (lats >= south) & (lats <= north) & (lons >= west) & (lons <= east)
+                    if polygon is not None and inside.any():
+                        inside[inside] = within(polygon, (lats[inside] * gran + lat_offset) / 1e9,
+                                                (lons[inside] * gran + lon_offset) / 1e9)
                     hits.append((ids[inside], lats[inside], lons[inside]))
     selected, lats, lons = (np.concatenate(parts) for parts in zip(*hits)) if hits else [np.zeros(0, np.int64)] * 3
     coordinates = (array("q", lats.tobytes()), array("q", lons.tobytes())) if retain else None
@@ -639,11 +643,11 @@ class PBF:
             return
         yield from self.objects(4, wanted)
 
-    def select(self, area, xml=False):
+    def select(self, area, xml=False, polygon=None):
         self.way_xml = {}
         self.selected_coordinates.clear()
         spatial, nodes, ways, relations = set(), set(), set(), set()
-        tasks = ((self.path, entry, area, xml) for entry in self.entries)
+        tasks = ((self.path, entry, area, polygon, xml) for entry in self.entries)
         last = None
         for entry, (kinds, first, end, selected, coordinates) in zip(self.entries, self.parallel(scan_nodes, tasks)):
             entry[2:] = kinds, first, end
@@ -724,7 +728,7 @@ class PBF:
             return
         unknown = [entry for entry in self.entries if not entry[2] or (entry[2] & 6 and entry[3] is None)]
         for entry, (kinds, first, last, _, _) in zip(
-                unknown, self.parallel(scan_nodes, ((self.path, e, None, False) for e in unknown))):
+                unknown, self.parallel(scan_nodes, ((self.path, e, None, None, False) for e in unknown))):
             entry[2:] = kinds, first, last
         tasks = []
         for entry in self.entries:
@@ -797,8 +801,9 @@ class PBF:
                 item["center"] = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         return items
 
-    def export(self, area, output):
-        selected = self.select(area, xml=True)
+    def export(self, polygon, output):
+        area = extent(polygon)
+        selected = self.select(area, xml=True, polygon=polygon)
         south, west, north, east = area
         with atomic_path(output) as temporary, temporary.open("wb") as stream:
             stream.write((f'<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="Aleph">\n'

@@ -5,11 +5,11 @@ from pathlib import Path
 
 from . import capture, places, routes, streetview
 from .common import WORKERS, MissingImagery, RequestError, now, number, positive, write_json
-from .geo import around, bearing, bounds, coordinate, distance, extent, point
+from .geo import around, bearing, bounds, coordinate, corners, distance, extent, point
 
 def coverage(client, area, progress, workers):
     try:
-        return streetview.coverage(client, area, progress, workers)
+        return streetview.coverage(client, corners(area), progress, workers)
     except (OSError, ValueError) as error:
         raise RequestError("provider_unavailable", f"Street View coverage request failed: {error}") from error
 
@@ -28,7 +28,7 @@ def street_samples(client, sections, stops, step, progress, workers):
     area = bounds((lower[0], lower[1], upper[2], upper[3]))
     views = coverage(client, area, progress, workers)
     ways, _ = client.maps.data(area, progress=progress)
-    context = streetview.roads(ways, area, "all")
+    context = streetview.roads(ways, corners(area), "all")
     samples, gaps, requested = [], [], 0
     counts = routes.allocate_stops(sections, stops) if stops is not None else [None] * len(sections)
     for section, count in zip(sections, counts):
@@ -159,7 +159,7 @@ def satellite(client, output, progress, *, at=None, place=None, match=None, best
         center, selected_place = location(client, at=at, place=place, match=match,
                                           best_match=best_match, endpoint=endpoint)
         area = around(center, size)
-    run = capture.plan(client, area, dict(include=["satellite"], satellite_zoom=zoom,
+    run = capture.plan(client, corners(area), dict(include=["satellite"], satellite_zoom=zoom,
                                         satellite_format=satellite_format, satellite_workers=workers), progress)
     folder = capture.create_folder(run, output)
     try:

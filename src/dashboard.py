@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import capture, layers, places
 from .common import CachedClient, Client, RequestError, contained, now
-from .geo import bounds, collection, coordinate, feature, grid
+from .geo import collection, coordinate, extent, feature, lines, vertices
 
 WEB = Path(__file__).resolve().parent / "web"
 PHOTO_KEYS = ("sequence", "filename", "heading", "side", "imagery_date", "pano_id", "path_name", "streetview_url")
@@ -61,24 +61,19 @@ class Job:
             print(f"alephgeo dashboard: {self.error}", file=sys.stderr)
 
 
-def imagery(area, stage, tile_size):
+def imagery(polygon, stage, tile_size):
     g = stage["grid"]
-    return dict(tiles=g["rows"] * g["columns"], zoom=g["zoom"], width=g["width"], height=g["height"],
-                meters_per_pixel=capture.resolution(area, g["zoom"], tile_size))
+    return dict(tiles=g["count"], zoom=g["zoom"], width=g["width"], height=g["height"],
+                meters_per_pixel=capture.resolution(polygon, g["zoom"], tile_size))
 
 
 def grid_lines(g, kind):
     """Tile boundaries, or just the outline of large grids."""
-    x0, y0, x1, y1 = g["x0"], g["y0"], g["x0"] + g["columns"], g["y0"] + g["rows"]
-
     def point(x, y):
         lat, lon = coordinate(x * 256, y * 256, g["zoom"])
         return [lon, lat]
 
-    xs = range(x0, x1 + 1) if g["columns"] <= 64 else (x0, x1)
-    ys = range(y0, y1 + 1) if g["rows"] <= 64 else (y0, y1)
-    lines = [[point(x, y0), point(x, y1)] for x in xs] + [[point(x0, y), point(x1, y)] for y in ys]
-    return feature("MultiLineString", lines, dict(kind=kind))
+    return feature("MultiLineString", [[point(*a), point(*b)] for a, b in lines(g)], dict(kind=kind))
 
 
 def plan_layers(run):
@@ -97,7 +92,7 @@ def plan_layers(run):
 
 
 def preview(run):
-    area, stages = run["bounds"], {}
+    stages = {}
     for stage in run["stages"]:
         mode = stage["mode"]
         if mode == "streetview":
@@ -105,14 +100,14 @@ def preview(run):
                                 panoramas=stage["coverage"]["available"], gaps=len(stage["coverage"]["gaps"]),
                                 meters=stage["length"])
         elif mode in ("satellite", "terrain"):
-            stages[mode] = imagery(area, stage, 512 if mode == "terrain" else 256)
+            stages[mode] = imagery(run["polygon"], stage, 512 if mode == "terrain" else 256)
         elif mode == "mesh":
             stages[mode] = dict(nodes=len(stage["nodes"]), level=stage["level"])
         else:
             stages[mode] = {}
         stages[mode]["seconds"] = capture.estimate(dict(stages=[stage], options=run["options"]))["seconds"]
-    return dict(bounds=area, options=run["options"], seconds=capture.estimate(run)["seconds"], stages=stages,
-                layers=plan_layers(run))
+    return dict(bounds=extent(run["polygon"]), options=run["options"], seconds=capture.estimate(run)["seconds"],
+                stages=stages, layers=plan_layers(run))
 
 
 def summary(identity, run, live):
@@ -126,16 +121,19 @@ def summary(identity, run, live):
         if "grid" in stage:
             info.update(zoom=stage["grid"]["zoom"], minzoom=layers.lowest(stage))
     state = "interrupted" if run["state"] == "running" and not live else run["state"]
-    return dict(id=identity, bounds=run["bounds"], started_at=run["started_at"], finished_at=run.get("finished_at"),
+    # Polygons go to the browser in GeoJSON order, [lon, lat].
+    return dict(id=identity, bounds=extent(run["polygon"]), polygon=[point[::-1] for point in run["polygon"]],
+                started_at=run["started_at"],
+                finished_at=run.get("finished_at"),
                 state=state, error=run.get("error"), options=run["options"], stages=stages)
 
 
 def area_and_options(body):
     try:
-        area = bounds([float(value) for value in body["bounds"]])
+        polygon = vertices(point[::-1] for point in body["polygon"])
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError(f"Draw a valid rectangle first. {error}".strip()) from error
-    return area, capture.settings(body.get("options"))
+        raise ValueError(f"Draw a valid area first. {error}".strip()) from error
+    return polygon, capture.settings(body.get("options"))
 
 
 class Dashboard:
@@ -161,10 +159,10 @@ class Dashboard:
         return Client(delay, cancel=job.check, cache_dir=self.cache_dir, refresh=self.refresh)
 
     def plan(self, body):
-        area, options = area_and_options(body)
+        polygon, options = area_and_options(body)
 
         def work(job):
-            job.run = capture.plan(self.client(job, options["delay"]), area, options, job.progress)
+            job.run = capture.plan(self.client(job, options["delay"]), polygon, options, job.progress)
             job.preview = preview(job.run)
 
         return self.start("plan", work)
@@ -341,14 +339,14 @@ class Dashboard:
             case "GET", ["api", "captures", identity, "files", *path] if path:
                 return self.file(identity, path)
             case "POST", ["api", "estimate"]:
-                area, options = area_and_options(body)
+                polygon, options = area_and_options(body)
                 result = {}
                 for mode in ("satellite", "terrain"):
                     if mode in options["include"]:
-                        stage = dict(mode=mode, grid=grid(area, options[f"{mode}_zoom"]), results=[])
-                        result[mode] = dict(imagery(area, stage, 512 if mode == "terrain" else 256),
+                        stage = dict(mode=mode, grid=capture.tile_grid(mode, polygon, options), results=[])
+                        result[mode] = dict(imagery(polygon, stage, 512 if mode == "terrain" else 256),
                                             seconds=capture.estimate(dict(stages=[stage], options=options))["seconds"])
-                result["planning"] = capture.planning(area, options)
+                result["planning"] = capture.planning(polygon, options)
                 return result
             case "POST", ["api", "plan"]:
                 return self.plan(body)

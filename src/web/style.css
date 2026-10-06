@@ -290,6 +290,7 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 
 /* Area and sources */
 
+.shape { margin-bottom: 10px; }
 .area { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 #area strong { font-weight: 600; }
 

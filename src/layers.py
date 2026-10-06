@@ -3,6 +3,7 @@
 import math
 import threading
 import zlib
+from bisect import bisect_left
 from collections import OrderedDict, defaultdict
 from io import BytesIO
 from xml.etree import ElementTree as ET
@@ -46,20 +47,16 @@ PATHS = {"footway", "path", "cycleway", "steps", "pedestrian", "track", "bridlew
 
 
 def saved(grid, count, z, x, y):
-    """One past the last saved grid tile inside tile z/x/y, or 0; downloads are row-major."""
+    """One past the last saved grid tile inside tile z/x/y, or 0; downloads follow the grid's spans."""
     factor = 2 ** (grid["zoom"] - z)
-    left = max(x * factor - grid["x0"], 0)
-    right = min((x + 1) * factor - grid["x0"], grid["columns"])
-    top = max(y * factor - grid["y0"], 0)
-    bottom = min((y + 1) * factor - grid["y0"], grid["rows"])
-    if left >= right or top >= bottom:
-        return 0
-    columns = grid["columns"]
-    row = min(bottom - 1, (count - 1) // columns)
-    end = min(right, count - row * columns)
-    if end <= left:
-        row, end = row - 1, right
-    return row * columns + end if row >= top else 0
+    left, top = x * factor - grid["x0"], y * factor - grid["y0"]
+    spans = grid["spans"]
+    # The block's rows, latest first; spans start with their row.
+    for row, start, end, before in reversed(spans[bisect_left(spans, [top]):bisect_left(spans, [top + factor])]):
+        stop = min(end, left + factor, start + count - before)
+        if max(start, left) < stop:
+            return before + stop - start
+    return 0
 
 
 def lowest(stage):

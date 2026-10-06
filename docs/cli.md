@@ -81,6 +81,14 @@ alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
 
 The command shows an estimate and asks before downloading. Add `--yes` to skip the prompt, or `--plan` to save a plan for later.
 
+To capture any other shape, use `--polygon` with its corners in order as `LAT LON` pairs:
+
+```sh
+alephgeo capture create --polygon 41.8895 12.4910 41.8910 12.4915 41.8905 12.4940 41.8893 12.4932 -o captures
+```
+
+Street View, satellite imagery, OSM data, and the 3D mesh stay inside the polygon; satellite pixels outside it are transparent. Terrain covers its bounding box. Edges must not cross.
+
 Use `--sources` to select `streetview`, `satellite`, `osm`, or `terrain`, or a combination. These four are the default.
 
 Add `mesh` for Google Earth's textured 3D model of the area, saved as `mesh.glb`:
@@ -89,7 +97,7 @@ Add `mesh` for Google Earth's textured 3D model of the area, saved as `mesh.glb`
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources mesh satellite -o captures
 ```
 
-`--mesh-level 1–22` sets the detail (default: `21`). Each level halves the texel size; `22` is the most detailed (about 4 cm per texel) and needs about four times as many downloads as `21`. Coordinates in `mesh.glb` are meters from the rectangle's center: x east, y up, z south, with the lowest point at y = 0. The file is split into objects of up to 64 tiles, and each tile keeps its original texture.
+`--mesh-level 1–22` sets the detail (default: `21`). Each level halves the texel size; `22` is the most detailed (about 4 cm per texel) and needs about four times as many downloads as `21`. Coordinates in `mesh.glb` are meters from the center of the area's bounding box: x east, y up, z south, with the lowest point at y = 0. The file is split into objects of up to 64 tiles, and each tile keeps its original texture.
 
 Resume a capture or start a saved plan using its printed run folder:
 

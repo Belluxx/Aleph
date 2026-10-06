@@ -12,7 +12,7 @@ from PIL import Image
 
 from src import capture, quick, streetview
 from src.common import MissingImagery
-from src.geo import coordinate
+from src.geo import coordinate, corners
 
 
 def image_bytes(size=(256, 256)):
@@ -54,7 +54,7 @@ class CaptureTests(unittest.TestCase):
     def satellite_run(self, columns=1):
         north, west = coordinate(1024, 1024, 4)
         south, east = coordinate(1024 + columns * 256, 1280, 4)
-        return capture.plan(None, (south, west, north, east),
+        return capture.plan(None, corners((south, west, north, east)),
                             {"include": ["satellite"], "satellite_zoom": 4}, self.progress)
 
     def test_resume_keeps_saved_tiles_and_transparent_missing_imagery(self):
@@ -88,6 +88,25 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(image.getpixel((300, 100)), (0, 0, 0, 0))
             self.assertEqual(image.getpixel((600, 100))[3], 255)
 
+    def test_polygon_downloads_only_tiles_it_meets_and_clears_pixels_outside(self):
+        north, west = coordinate(1024, 1024, 4)
+        south, east = coordinate(2048, 2048, 4)
+        # The lower left half of a 4 × 4 tile grid, cut along its diagonal.
+        run = capture.plan(None, [(south, west), (north, west), (south, east)],
+                           {"include": ["satellite"], "satellite_zoom": 4}, self.progress)
+        client = Mock()
+        client.get.return_value = image_bytes()
+        capture.download(run, self.folder, client, self.progress)
+        queries = [parse_qs(call.args[0]) for call in client.get.call_args_list]
+        requested = [(int(query["x"][0]), int(query["y"][0])) for query in queries]
+        self.assertEqual(requested, [(4 + column, 4 + row) for row in range(4) for column in range(row + 1)])
+        self.assertEqual(capture.load(self.folder)["state"], "complete")
+        with Image.open(self.folder / "satellite.png") as image:
+            self.assertEqual(image.size, (1024, 1024))
+            # Inside, outside in a skipped tile, and on both sides of the diagonal in a saved tile.
+            self.assertEqual([image.getpixel(p)[3] for p in [(10, 1000), (1000, 10), (560, 700), (700, 560)]],
+                             [255, 0, 255, 0])
+
     def test_failed_export_can_resume_without_redownloading(self):
         run = self.satellite_run()
         client = Mock()
@@ -111,7 +130,7 @@ class CaptureTests(unittest.TestCase):
     def street_run(self):
         return dict(
             format="aleph-python", version=capture.FORMAT_VERSION,
-            bounds=[44.99, 8.99, 45.01, 9.01],
+            polygon=[list(point) for point in corners((44.99, 8.99, 45.01, 9.01))],
             options=capture.settings({"include": ["streetview"]}),
             state="planned", stages=[dict(
                 mode="streetview", full_sphere=False, results=[],
@@ -228,6 +247,17 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(photo["projection"], "equirectangular")
         with Image.open(photo["path"]) as image:
             self.assertEqual(image.size, (6, 3))
+
+
+class PolygonTests(unittest.TestCase):
+    def test_roads_split_where_they_leave_a_concave_polygon(self):
+        # A U open to the north: a road along latitude 2 crosses both arms and the gap between them.
+        polygon = [(0, 0), (0, 3), (3, 3), (3, 2), (1, 2), (1, 1), (3, 1), (3, 0)]
+        ways = [dict(id=1, tags=dict(highway="residential"), nodes=[1, 2, 3], points=[(2, -1), (2, 0.5), (2, 4)])]
+        parts = streetview.roads(ways, polygon, "roads")
+        self.assertEqual([[tuple(round(v, 9) for v in point) for point in part["points"]] for part in parts],
+                         [[(2, 0), (2, 0.5), (2, 1)], [(2, 2), (2, 3)]])
+        self.assertEqual([part["id"] for part in parts], ["way-1-1", "way-1-2"])
 
 
 class GoogleResponseTests(unittest.TestCase):
