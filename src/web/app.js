@@ -566,7 +566,7 @@ async function syncSolid() {
 
 // Area drawing
 
-const HINTS = {rectangle: "Drag to draw the capture area, or press Esc to pan instead",
+const HINTS = {rectangle: "Drag or click two corners to draw the capture area, or press Esc to pan instead",
                polygon: "Click to add points, then click the first one or double-click to finish"};
 const clampLngLat = ([lng, lat]) => [Math.max(-180, Math.min(180, lng)), Math.max(-85.05, Math.min(85.05, lat))];
 
@@ -608,6 +608,8 @@ function hint(text) {
 }
 
 function setDrawing(on) {
+  if (state.drag) state.area = state.drag.previous;  // Drops a rectangle still being drawn.
+  state.drag = null;
   state.drawing = on;
   state.sketch = on && state.tool === "polygon" ? [] : null;
   state.cursor = null;
@@ -669,6 +671,7 @@ function finishSketch() {
 
 function startDrag(event) {
   if (state.view !== "new" || event.originalEvent.button !== 0 || state.sketch) return;
+  if (state.drag) return event.preventDefault();  // A pinned corner: the click sets the opposite one.
   const index = state.drawing ? -1 : pointAt(event.point);
   if (!state.drawing && index < 0) return;
   event.preventDefault();  // Keeps the map from panning.
@@ -702,14 +705,30 @@ function moveDrag(event) {
 
 function endDrag() {
   const drag = state.drag;
-  if (!drag) return;
+  if (!drag || drag.pinned) return;
   state.drag = null;
   if (drag.anchor) {
     const [width, height] = state.area ? size(extent(state.area)) : [0, 0];
-    if (width < 5 || height < 5) return setArea(drag.previous);  // A click, not a drag.
+    if (width < 5 || height < 5) {
+      setArea(drag.previous);
+      // A click while drawing pins the first corner, and the rectangle follows the pointer until the next click.
+      if (state.drawing) {
+        state.drag = {...drag, pinned: true};
+        hint("Click the opposite corner, or press Esc to cancel");
+      }
+      return;
+    }
     setDrawing(false);
   }
   if (state.area !== drag.previous) estimate();
+}
+
+function clickMap(event) {
+  if (!state.drag?.pinned) return addPoint(event);
+  // The rectangle ends at the click, or stays pinned if that is too close to the first corner.
+  state.drag.pinned = false;
+  moveDrag(event);
+  endDrag();
 }
 
 // Settings
@@ -808,7 +827,7 @@ function estimate() {
 function renderArea() {
   const area = state.area;
   $("#redraw").innerHTML = state.drawing ? "Cancel" : `${icon("pencil")}${area ? "Redraw" : "Draw area"}`;
-  const drawing = state.tool === "polygon" ? "Click on the map to add points." : "Drag on the map to draw it.";
+  const drawing = state.tool === "polygon" ? "Click on the map to add points." : "Drag or click two corners on the map.";
   $("#area").innerHTML = area ? `<strong>${esc(dimensions(area))}</strong>`
     : `<span class="muted">${state.drawing ? drawing : "No area yet."}</span>`;
   renderPreviewButton();
@@ -1391,7 +1410,7 @@ function bind() {
   document.addEventListener("keydown", event => {
     if (event.target.matches("input, select, textarea") && event.key !== "Escape") return;
     if (event.key === "Escape") {
-      if (state.drawing && !state.drag) setDrawing(false);
+      if (state.drawing) setDrawing(false);
       else if (!results.hidden) results.hidden = true;
       else if (!$("#viewer").hidden) closeViewer();
     } else if (state.sketch && event.key === "Enter") {
@@ -1412,7 +1431,7 @@ function bindMap() {
   map.on("mousedown", startOrbit);
   map.on("mousemove", moveDrag);
   map.on("mouseup", endDrag);
-  map.on("click", addPoint);
+  map.on("click", clickMap);
   map.on("dblclick", event => {
     if (!state.sketch) return;
     event.preventDefault();  // Finishes the polygon instead of zooming.
