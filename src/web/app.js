@@ -288,7 +288,8 @@ const OVERLAYS = [
    paint: {"circle-radius": 6, "circle-color": "--accent", "circle-stroke-color": "--paper", "circle-stroke-width": 2}},
   {id: "outlines-fill", source: "outlines", type: "fill", paint: {"fill-color": "--accent", "fill-opacity": hover(0.08, 0)}},
   {id: "outlines", source: "outlines", type: "line", paint: {"line-color": hover("--accent", "--ink"), "line-width": hover(2, 1)}},
-  {id: "area-fill", source: "area", type: "fill", paint: {"fill-color": "--accent", "fill-opacity": 0.07}},
+  {id: "area-fill", source: "area", type: "fill", filter: ["==", ["geometry-type"], "Polygon"],
+   paint: {"fill-color": "--accent", "fill-opacity": 0.07}},
   {id: "area-line", source: "area", type: "line", paint: {"line-color": "--accent", "line-width": 1.5}},
   {id: "corners", source: "corners", type: "symbol",
    layout: {"icon-image": "corner", "icon-allow-overlap": true, "icon-ignore-placement": true}},
@@ -573,11 +574,12 @@ function setArea(area) {
   renderArea();
 }
 
-// The area, or the polygon being drawn with a line to the pointer.
+// The area, or the polygon being drawn, closed through the pointer.
 function showArea() {
   const {sketch, area} = state;
   if (sketch?.length) {
-    setData("area", collection([line(state.cursor ? [...sketch, state.cursor] : sketch)]));
+    const points = state.cursor ? [...sketch, state.cursor] : sketch;
+    setData("area", collection([points.length > 2 ? polygon(points) : line(points)]));
     setData("corners", collection(sketch.map(c => point(c))));
   } else {
     setData("area", area ? collection([polygon(area)]) : EMPTY);
@@ -607,6 +609,10 @@ function setDrawing(on) {
   state.drawing = on;
   state.sketch = on && state.tool === "polygon" ? [] : null;
   state.cursor = null;
+  if (on && state.area) {
+    state.area = null;  // Drawing starts over.
+    estimate();
+  }
   hint(on ? HINTS[state.tool] : "");
   map.getCanvas().style.cursor = on ? "crosshair" : "";
   showArea();
