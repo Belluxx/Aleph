@@ -137,11 +137,13 @@ function dimensions(points) {
     : `${Math.round(area).toLocaleString("en-US")} m²`} polygon`;
 }
 
-// Whether two edges cross, which the server refuses.
-function tangled(points) {
+// Whether two edges of a polygon cross, or of an open path when drawing; the server refuses crossed polygons.
+function tangled(points, closed = true) {
   const side = (a, b, c) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
-  const edges = points.map((p, i) => [p, points[(i + 1) % points.length]]);
-  return edges.some(([a, b], i) => edges.slice(i + 2, edges.length - (i === 0)).some(([c, d]) =>
+  const path = closed ? [...points, points[0]] : points;
+  const edges = path.slice(1).map((p, i) => [path[i], p]);
+  // Neighbors share a point, including the last and first edges of a polygon.
+  return edges.some(([a, b], i) => edges.slice(i + 2, edges.length - (closed && i === 0)).some(([c, d]) =>
     side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0));
 }
 
@@ -626,19 +628,31 @@ function setTool(tool) {
   setDrawing(true);
 }
 
+// What a click does while drawing a polygon: "close" it, "add" a point, or nothing where edges would cross.
+function sketchClick(event) {
+  const sketch = state.sketch;
+  if (sketch.length >= 3 && pointAt(event.point, sketch) === 0) return tangled(sketch) ? null : "close";
+  return tangled([...sketch, event.lngLat.toArray()], false) ? null : "add";
+}
+
 // Polygon points come from clicks, so the map still pans while drawing one.
 function addPoint(event) {
   const sketch = state.sketch;
   if (state.view !== "new" || !sketch) return;
-  if (sketch.length >= 3 && pointAt(event.point, sketch) === 0) return finishSketch();
-  if (pointAt(event.point, sketch.slice(-1)) === 0) return;  // The second click of a double-click.
+  const action = sketchClick(event);
+  if (action === "close") return finishSketch();
+  if (!action || pointAt(event.point, sketch.slice(-1)) === 0) return;  // Also the second click of a double-click.
   sketch.push(clampLngLat(event.lngLat.toArray()));
-  showArea();
-  syncMap();
+  changeSketch();
 }
 
 function removePoint() {
   state.sketch.pop();
+  changeSketch();
+}
+
+function changeSketch() {
+  hint(HINTS.polygon);
   showArea();
   syncMap();
 }
@@ -646,6 +660,7 @@ function removePoint() {
 function finishSketch() {
   const sketch = state.sketch;
   if (!sketch || sketch.length < 3) return;
+  if (tangled(sketch)) return hint("Edges cannot cross: add a point or press Backspace");
   state.sketch = null;
   setArea(sketch);
   setDrawing(false);
@@ -666,12 +681,17 @@ function startDrag(event) {
 function moveDrag(event) {
   const drag = state.drag, at = event.lngLat.toArray();
   if (drag?.anchor) return setArea(rectangleFrom(drag.anchor, at));
-  if (drag) return setArea(drag.previous.with(drag.index, clampLngLat(at)));
+  if (drag) {
+    // A point stops where moving it further would cross edges.
+    const points = drag.previous.with(drag.index, clampLngLat(at));
+    if (!tangled(points)) setArea(points);
+    return;
+  }
   if (state.view !== "new") return;
   if (state.sketch) {
     state.cursor = at;
-    const closing = state.sketch.length >= 3 && pointAt(event.point, state.sketch) === 0;
-    map.getCanvas().style.cursor = closing ? "pointer" : "crosshair";
+    const action = sketchClick(event);
+    map.getCanvas().style.cursor = action === "close" ? "pointer" : action ? "crosshair" : "not-allowed";
     showArea();
   } else if (!state.drawing) {
     const index = pointAt(event.point);
@@ -741,10 +761,9 @@ function placeTag(range) {
 }
 
 function renderPreviewButton() {
-  const button = $("#preview-button"), sources = readForm().include.length, crossed = state.area && tangled(state.area);
-  button.disabled = !state.area || !sources || crossed;
-  button.textContent = !sources ? "Select one or more sources first" : !state.area ? "Draw an area first"
-    : crossed ? "Move points so edges do not cross" : "Preview";
+  const button = $("#preview-button"), sources = readForm().include.length;
+  button.disabled = !state.area || !sources;
+  button.textContent = !sources ? "Select one or more sources first" : !state.area ? "Draw an area first" : "Preview";
 }
 
 let estimateTimer = null;
@@ -754,7 +773,7 @@ let estimateCount = 0;
 async function fetchEstimate() {
   const {include, satellite_zoom, terrain_zoom, mesh_level, streetview_workers, satellite_workers, terrain_workers,
          mesh_workers, delay} = readForm();
-  if (!state.area || tangled(state.area) || include.every(mode => mode === "osm")) return {};
+  if (!state.area || include.every(mode => mode === "osm")) return {};
   try {
     return await api("/api/estimate", {polygon: state.area, options: {include, satellite_zoom, terrain_zoom, mesh_level,
       streetview_workers, satellite_workers, terrain_workers, mesh_workers, delay}});
