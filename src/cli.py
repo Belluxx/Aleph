@@ -24,13 +24,14 @@ def tile_coordinates(value):
 
 
 def parser():
-    root = Parser(prog="alephgeo", description="Download chunks of the earth with 'capture', get specific data with 'streetview' and 'satellite', search for places with 'resolve'.")
+    root = Parser(prog="alephgeo", description="Download chunks of the earth with 'capture', get specific data with 'streetview' and 'satellite', search for places with 'resolve', and walk a capture with 'game'.")
     commands = root.add_subparsers(dest="command", required=True)
     _resolve_command(commands)
     _streetview_command(commands)
     _satellite_command(commands)
     _capture_command(commands)
     _dashboard_command(commands)
+    _game_command(commands)
     return root
 
 
@@ -199,3 +200,14 @@ def _dashboard_command(commands):
     dashboard.add_argument("--port", type=int, default=8100, help="local port (default: %(default)s)")
     dashboard.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
     _cache_options(dashboard)
+
+
+def _game_command(commands):
+    game = commands.add_parser("game", help="Rebuild a capture as a walkable game world")
+    game.add_argument("folder", type=Path, help="capture directory containing manifest.json; the world goes in its game folder")
+    game.add_argument("--style", default="auto", help="building style preset, or auto to choose from OSM tags (default: auto)")
+    game.add_argument("--chunk", type=float, metavar="METERS", help="chunk size in meters (default: 64)")
+    game.add_argument("--quality", choices=("draft", "high"), help="draft skips windows and props for a quick look (default: high)")
+    game.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE, help="data cache directory (default: %(default)s)")
+    game.add_argument("--view", action="store_true", help="walk the result in aleph_view after building (needs cargo)")
+    _json_option(game)

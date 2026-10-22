@@ -7,3 +7,5 @@ aleph-*/
 build/
 dist/
 *.egg-info/
+captures/
+viewer/target/

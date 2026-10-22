@@ -153,6 +153,23 @@ function when(iso) {
     date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit"})}`;
 }
 
+const title = c => c.name || when(c.started_at);
+
+// Paths sit in right-to-left boxes so their start is cut instead of their end; marks keep slashes in place.
+const showPath = (element, path) => {
+  element.textContent = `‎${path}‎`;
+  element.title = path;
+};
+
+// The capture's shape, scaled into a square.
+function outline(points) {
+  const [s, w, n, e] = extent(points), k = Math.cos((s + n) / 2 * Math.PI / 180);
+  const scale = 40 / Math.max((e - w) * k, n - s, 1e-9);
+  const x = lng => 24 + (lng - (w + e) / 2) * k * scale, y = lat => 24 - (lat - (s + n) / 2) * scale;
+  const d = points.map(([lng, lat]) => `${x(lng).toFixed(1)} ${y(lat).toFixed(1)}`).join("L");
+  return `<svg class="thumb" viewBox="0 0 48 48" aria-hidden="true"><path d="M${d}Z"/></svg>`;
+}
+
 function destination([lon, lat], heading, length) {
   const r = Math.PI / 180, d = length / EARTH, h = heading * r, phi = lat * r;
   const phi2 = Math.asin(Math.sin(phi) * Math.cos(d) + Math.cos(phi) * Math.sin(d) * Math.cos(h));
@@ -190,6 +207,7 @@ const state = {
             outline: true, basemap: true, ...store.get("toggles", {})},
   solid: null,  // 3D layer shown in a capture: "mesh", "relief", or null.
   meshLoading: false,
+  reuse: null,  // Capture whose area and settings the next new capture starts from.
 };
 
 let map;
@@ -197,6 +215,7 @@ let navigation;
 let basemapLayers = [];
 // Raster source and layer ids per mode, oldest first; a refresh loads on top until it replaces the older one.
 const rasters = {satellite: [], terrain: []};
+let libraryRasters = [];  // Satellite imagery of every capture, shown under the library's outlines.
 let rasterCount = 0;
 const themed = new Map();  // Layer id → paint with CSS variable names, resolved per color scheme.
 
@@ -493,30 +512,43 @@ async function meshLayer(capture) {
   };
 }
 
+let tilted = false;
+
 // 3D layers tilt the map and let it rotate; otherwise it stays flat and north up.
+// Mouse drags are handled by startCameraDrag, so MapLibre's right-drag rotation stays off.
 function tilt(on) {
-  if (on === map.dragRotate.isEnabled()) return;
-  for (const handler of [map.dragRotate, map.touchPitch]) on ? handler.enable() : handler.disable();
+  if (on === tilted) return;
+  tilted = on;
+  on ? map.touchPitch.enable() : map.touchPitch.disable();
   for (const handler of [map.touchZoomRotate, map.keyboard]) on ? handler.enableRotation() : handler.disableRotation();
   on ? map.boxZoom.disable() : map.boxZoom.enable();  // Shift + drag orbits instead.
   map.removeControl(navigation);
   navigation = new maplibregl.NavigationControl({showCompass: on});  // Its click turns north and keeps the tilt.
   map.addControl(navigation, "top-right");
-  hint(on ? "Shift + drag to rotate and tilt" : "");
+  hint(on ? "Middle-drag to orbit, right-drag to zoom" : "");
   // Easing at once would stop a move in progress, such as the fit to a capture just opened, halfway.
   const ease = () => map.easeTo(on ? {pitch: PITCH} : {pitch: 0, bearing: 0});
   map.isMoving() ? map.once("moveend", ease) : ease();
 }
 
-// Shift + drag rotates and tilts as in Google Earth, at the speeds of MapLibre's right-drag.
-function startOrbit(event) {
-  const {shiftKey, button, clientX, clientY} = event.originalEvent;
-  if (!shiftKey || button !== 0 || !map.dragRotate.isEnabled()) return;
+// 3D views drag as in Cesium: left pans, middle or Ctrl + left orbits around the grabbed point, and right zooms
+// toward it, in when dragging down. Shift + left also orbits, as in Google Earth.
+function startCameraDrag(event) {
+  const {button, ctrlKey, shiftKey, clientX, clientY} = event.originalEvent;
+  const orbit = button === 1 || (button === 0 && (ctrlKey || shiftKey));
+  if (!tilted || (!orbit && button !== 2)) return;
   event.preventDefault();  // Keeps the map from panning.
+  event.originalEvent.preventDefault();  // Keeps middle clicks from scrolling the page.
+  const start = event.point, pivot = map.unproject(start);
   let last = [clientX, clientY];
   const move = ({clientX: x, clientY: y}) => {
-    map.jumpTo({bearing: map.getBearing() + (x - last[0]) * 0.8, pitch: map.getPitch() - (y - last[1]) * 0.5});
+    const dx = x - last[0], dy = y - last[1];
     last = [x, y];
+    if (!orbit) return map.easeTo({zoom: map.getZoom() + dy / 200, around: pivot, duration: 0});
+    map.jumpTo({bearing: map.getBearing() + dx * 0.4, pitch: map.getPitch() - dy * 0.4});
+    // Move the pivot back under the point where the drag started.
+    const at = map.project(pivot), center = map.project(map.getCenter());
+    map.setCenter(map.unproject([center.x + at.x - start.x, center.y + at.y - start.y]));
   };
   window.addEventListener("mousemove", move);
   window.addEventListener("mouseup", () => window.removeEventListener("mousemove", move), {once: true});
@@ -863,29 +895,114 @@ async function loadCaptures() {
     return;
   }
   setData("outlines", collection(state.captures.filter(c => c.polygon).map(c => polygon(c.polygon, {id: c.id}))));
+  if (state.view === "library") showLibraryRasters();
   renderLibrary();
+}
+
+// Each refresh of the saved count gets a new source, as in setRaster.
+function showLibraryRasters() {
+  const shown = state.captures.filter(c => c.stages?.satellite?.done)
+    .map(c => [`raster-library-${c.id}-${c.stages.satellite.done}`, c]);
+  const ids = shown.map(([id]) => id);
+  for (const id of libraryRasters) if (!ids.includes(id)) removeRaster(id);
+  for (const [id, c] of shown) {
+    if (libraryRasters.includes(id)) continue;
+    const [s, w, n, e] = c.bounds, {minzoom, zoom, done} = c.stages.satellite;
+    map.addSource(id, {type: "raster", tileSize: 256, bounds: [w, s, e, n], minzoom, maxzoom: zoom,
+                       tiles: [absolute(capturePath(c.id, `/satellite/{z}/{x}/{y}?v=${done}`))]});
+    addLayer({id, type: "raster", source: id, paint: {"raster-fade-duration": 0}}, "osm-land");
+  }
+  libraryRasters = ids;
+}
+
+function hideLibraryRasters() {
+  libraryRasters.splice(0).forEach(removeRaster);
 }
 
 function renderLibrary() {
   const list = $("#captures");
   $("#capture-count").textContent = state.captures.length || "";
   if (!state.captures.length) {
-    list.innerHTML = `<li class="empty">No captures here yet.</li>`;
+    list.innerHTML = `<li class="empty"><strong>No captures yet</strong>
+      <span class="detail">Start a new capture, draw an area on the map, and choose what to download.</span></li>`;
     return;
   }
   list.innerHTML = state.captures.map(c => {
     if (!c.polygon) {
-      return `<li><div class="capture"><span class="when">${esc(c.id)}</span><span class="state failed">${STATES[c.state]}</span>
-        <span class="detail">${esc(c.error)}</span></div></li>`;
+      return `<li class="card"><div class="capture"><span class="thumb"></span><span class="when">${esc(c.id)}</span>
+        <span class="state failed">${STATES[c.state]}</span><span class="detail">${esc(c.error)}</span></div>${cardActions(c.id, ["delete"])}</li>`;
     }
     const live = running("capture", c.id);
     const bar = live ? `<span class="bar"><i style="width:${libraryProgress()}%"></i></span>` : "";
     const status = live ? "running" : c.state;
-    return `<li><button type="button" class="capture" data-id="${esc(c.id)}">
-      <span class="when">${esc(when(c.started_at))}</span><span class="state ${status}">${STATES[status]}</span>
-      <span class="detail">${esc(c.options.include.map(s => NAMES[s]).join(", "))} (${esc(dimensions(c.polygon))})</span>${bar}
-    </button></li>`;
+    const subtitle = [c.name && when(c.started_at), dimensions(c.polygon)].filter(Boolean).join(" · ");
+    const sources = c.options.include.map(mode => `<span title="${NAMES[mode]}">${icon(mode)}</span>`).join("");
+    const imagery = c.stages.satellite?.done;
+    const thumb = imagery ? `<img class="thumb" src="${capturePath(c.id, `/thumbnail?v=${imagery}`)}" alt="" loading="lazy"
+      onerror="this.style.visibility = 'hidden'">`
+      : outline(c.polygon);
+    return `<li class="card"><button type="button" class="capture" data-id="${esc(c.id)}">
+      ${thumb}<span class="when">${esc(title(c))}</span><span class="state ${status}">${STATES[status]}</span>
+      <span class="detail">${esc(subtitle)}</span><span class="sources">${sources}</span>${bar}
+    </button>${live ? "" : cardActions(c.id, ["rename", "delete"])}</li>`;
   }).join("");
+}
+
+const ACTIONS = {rename: ["pencil", "Rename"], delete: ["trash", "Delete"]};
+const cardActions = (id, actions) => `<span class="card-actions">${actions.map(action => {
+  const [name, label] = ACTIONS[action];
+  return `<button type="button" class="icon-button" data-action="${action}" data-id="${esc(id)}" title="${label}"
+    aria-label="${label}">${icon(name)}</button>`;
+}).join("")}</span>`;
+
+function renameCapture(c) {
+  const dialog = $("#rename"), input = $("input", dialog);
+  dialog.dataset.id = c.id;
+  input.value = c.name || "";
+  input.placeholder = when(c.started_at);
+  $(".error", dialog).hidden = true;
+  dialog.showModal();
+  input.select();
+}
+
+async function saveName(event) {
+  event.preventDefault();
+  const dialog = $("#rename"), error = $(".error", dialog);
+  try {
+    const detail = await api(capturePath(dialog.dataset.id, "/rename"), {name: $("input", dialog).value});
+    dialog.close();
+    if (state.capture?.id === detail.id) {
+      state.capture = detail;
+      renderCapture();
+    }
+    if (state.view === "library") loadCaptures();
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+  }
+}
+
+async function deleteCapture(c) {
+  const name = c.polygon ? title(c) : c.id;
+  const size = c.size ? ` (${megabytes(c.size)})` : "";
+  if (!await ask(`${icon("trash")}Delete ${esc(name)}?`, true, "",
+    `This permanently deletes the capture folder and every file in it${size}.`, "Delete", "Keep it")) return;
+  const error = state.view === "capture" ? $("#capture-error") : $("#library-error");
+  try {
+    await api(capturePath(c.id, "/delete"), {});
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+    return;
+  }
+  error.hidden = true;
+  if (state.view === "capture") location.hash = "#/";
+  else loadCaptures();
+}
+
+function reuseCapture(c) {
+  state.reuse = c;
+  location.hash = "#/new";
 }
 
 function libraryProgress() {
@@ -1092,8 +1209,12 @@ function renderCapture() {
   const job = state.job;
   const live = running("capture", c.id);
   const status = live ? "running" : c.state;
-  $("#capture-title").textContent = when(c.started_at);
-  $("#capture-meta").textContent = `${STATES[status]}: ${dimensions(c.polygon)}`;
+  $("#capture-title").textContent = title(c);
+  $("#capture-meta").innerHTML = `<span class="state ${status}">${STATES[status]}</span>${c.name ? esc(when(c.started_at)) : ""}`;
+  $("#rename-capture").disabled = $("#delete-capture").disabled = live;
+  const facts = [["Area", dimensions(c.polygon)], ["Started", when(c.started_at)],
+                 c.finished_at && ["Finished", when(c.finished_at)], ["On disk", megabytes(c.size)]];
+  $("#overview").innerHTML = facts.filter(Boolean).map(([name, value]) => `<dt>${name}</dt><dd>${esc(value)}</dd>`).join("");
   $("#progress").hidden = !live;
   if (live) {
     const downloadPhase = DOWNLOADS.has(job.phase) && !job.stopping;
@@ -1118,12 +1239,68 @@ function renderCapture() {
   $("#stop").disabled = !!job?.stopping;
   $("#stop").textContent = job?.stopping ? "Stopping…" : "Stop";
   $("#resume").hidden = live || c.state === "complete";
-  $("#resume").disabled = running("plan") || running("capture");
-  $("#folder").textContent = c.folder;
+  $("#resume").disabled = running("plan") || running("capture") || running("game");
+  showPath($("#folder"), c.folder);
+  // Images open in a new tab; other files download.
   $("#files").innerHTML = Object.entries(c.files).map(([name, bytes]) =>
-    `<li><span>${esc(name)}</span><span class="value">${megabytes(bytes)}</span></li>`).join("")
+    `<li><a href="${capturePath(c.id, `/files/${encodeURIComponent(name)}`)}" ${name.endsWith(".png")
+      ? 'target="_blank" rel="noopener"' : "download"}>${esc(name)}</a><span class="value">${megabytes(bytes)}</span></li>`).join("")
     || `<li class="muted">No merged files yet.</li>`;
   renderLayers();
+  renderGame();
+}
+
+// Game world
+
+function renderGame() {
+  const c = state.capture, g = c.game, job = state.job;
+  const live = running("game", c.id);
+  $("#game-progress").hidden = !live;
+  if (live) renderProgress($("#game-progress"), job);
+  const failed = !live && job?.kind === "game" && job.capture === c.id && job.state === "failed";
+  $("#game-error").hidden = !failed;
+  $("#game-error").textContent = failed ? job.error : "";
+  $("#game-status").textContent = live ? "Building the world. Its buildings, roads, and trees are generated from this capture."
+    : g ? `Built${g.built_at ? ` ${when(g.built_at)}` : ""} at ${g.quality} quality${g.style && g.style !== "auto" ? `, ${g.style} style` : ""}.`
+    : "Rebuild this place as a level you can walk in first person, with generated buildings, roads, trees, and street furniture.";
+  $("#game-facts").hidden = !g || live;
+  if (g) {
+    const facts = [["Buildings", `${number(g.buildings)}${g.landmarks ? ` + ${plural(g.landmarks, "landmark")}` : ""}`],
+                   ["Trees", number(g.trees)], ["Street furniture", number(g.props)], ["Triangles up close", number(g.triangles)]];
+    $("#game-facts").innerHTML = facts.map(([name, value]) => `<dt>${name}</dt><dd>${esc(value)}</dd>`).join("");
+  }
+  const build = $("#game-build");
+  build.innerHTML = live ? (job.stopping ? "Stopping…" : "Stop") : `${icon("mesh")}${g ? "Rebuild world" : "Build world"}`;
+  build.disabled = live ? !!job.stopping : state.job?.state === "running";
+  $("#game-view").disabled = !g || live;
+}
+
+async function buildGame() {
+  const id = state.capture.id;
+  if (running("game", id)) {
+    state.job = await api("/api/stop", {}).catch(() => state.job);
+    return renderGame();
+  }
+  const quality = $("[name=game-quality]:checked").value, style = $("#game-style").value;
+  try {
+    state.job = await api(capturePath(id, "/game"), {quality, style});
+    state.watched = state.job.id;
+    renderGame();
+    poll();
+  } catch (error) {
+    $("#game-error").textContent = error.message;
+    $("#game-error").hidden = false;
+  }
+}
+
+async function viewGame() {
+  try {
+    await api(capturePath(state.capture.id, "/game/view"), {});
+    $("#game-status").textContent = "Starting the viewer in its own window. Its first start compiles it, which takes a few minutes.";
+  } catch (error) {
+    $("#game-error").textContent = error.message;
+    $("#game-error").hidden = false;
+  }
 }
 
 function renderLayers() {
@@ -1241,6 +1418,10 @@ async function poll() {
       renderCapture();
     }
   }
+  if (job?.kind === "game" && state.capture?.id === job.capture && state.view === "capture") {
+    if (finished) await openCapture(job.capture);
+    else renderGame();
+  }
   if (state.view === "library") {
     const bar = job?.kind === "capture" && $(`.capture[data-id="${CSS.escape(job.capture)}"] .bar i`);
     if (finished || (running("capture") && !bar)) loadCaptures();
@@ -1258,6 +1439,7 @@ function show(view) {
     clearCaptureLayers();
     state.capture = state.captureId = null;
   }
+  if (view !== "library") hideLibraryRasters();
   state.view = view;
   if (map.getCanvas().style.cursor !== "crosshair") map.getCanvas().style.cursor = "";
   syncMap();
@@ -1266,11 +1448,21 @@ function show(view) {
 function route() {
   const [, view, id] = (location.hash.slice(1) || "/").split("/");
   if (view === "new") {
-    // A new capture starts from a fresh area; only returning from its preview keeps it.
-    if (state.view !== "new" && state.view !== "preview") setArea(null);
+    // A new capture starts from a fresh area, or a reused one; only returning from its preview keeps it.
+    const reused = state.reuse;
+    state.reuse = null;
+    if (reused) {
+      state.tool = rectangle(reused.polygon) ? "rectangle" : "polygon";
+      store.set("tool", state.tool);
+      fillForm(reused.options);
+      setArea(reused.polygon);
+    } else if (state.view !== "new" && state.view !== "preview") {
+      setArea(null);
+    }
     show("new");
     renderArea();
     estimate();
+    if (reused) map.fitBounds(lngLatBounds(reused.bounds), {padding: 80, maxZoom: 18, duration: 600});
     if (!state.area) setDrawing(true);
   } else if (view === "preview") {
     if (!state.preview && !state.planError && !running("plan") && state.watched !== state.job?.id) {
@@ -1341,9 +1533,22 @@ function bind() {
   });
 
   $("#captures").addEventListener("click", event => {
+    const action = event.target.closest("[data-action]");
+    if (action) {
+      const c = state.captures.find(c => c.id === action.dataset.id);
+      if (c) (action.dataset.action === "rename" ? renameCapture : deleteCapture)(c);
+      return;
+    }
     const button = event.target.closest(".capture[data-id]");
     if (button) location.hash = `#/capture/${encodeURIComponent(button.dataset.id)}`;
   });
+  $("#rename-capture").addEventListener("click", () => renameCapture(state.capture));
+  $("#reuse-capture").addEventListener("click", () => reuseCapture(state.capture));
+  $("#delete-capture").addEventListener("click", () => deleteCapture(state.capture));
+  $("#rename form").addEventListener("submit", saveName);
+  $("#game-build").addEventListener("click", buildGame);
+  $("#game-view").addEventListener("click", viewGame);
+  $("#rename .subtle").addEventListener("click", () => $("#rename").close());
   $("#captures").addEventListener("mouseover", event => hoverCapture(event.target.closest(".capture[data-id]")?.dataset.id ?? null));
   $("#captures").addEventListener("mouseleave", () => hoverCapture(null));
 
@@ -1428,7 +1633,9 @@ function bind() {
 
 function bindMap() {
   map.on("mousedown", startDrag);
-  map.on("mousedown", startOrbit);
+  map.on("mousedown", startCameraDrag);
+  // Right-drag zooms in 3D; Linux opens context menus on press.
+  map.getCanvasContainer().addEventListener("contextmenu", event => { if (tilted) event.preventDefault(); });
   map.on("mousemove", moveDrag);
   map.on("mouseup", endDrag);
   map.on("click", clickMap);
@@ -1463,8 +1670,9 @@ function bindMap() {
 
 async function init() {
   [state.config, state.icons] = await Promise.all([api("/api/config"), api("/api/icons")]);
-  $("#root").textContent = state.config.root;
-  $("#root").title = state.config.root;
+  showPath($("#root"), state.config.root);
+  $("#game-style").innerHTML = ["auto", ...state.config.styles].map(name =>
+    `<option value="${esc(name)}">${esc(name === "auto" ? "Automatic" : name)}</option>`).join("");
   for (const slot of $$("[data-icon]")) slot.outerHTML = icon(slot.dataset.icon);
   fillForm({...state.config.defaults, include: [], ...store.get("options", {})});
   // Sliders start hidden inside closed sources, so their level names are placed once shown.

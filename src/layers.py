@@ -178,6 +178,28 @@ class Tiles:
                 return png(shaded), "image/png"
         return png(image), "image/png"
 
+    def thumbnail(self, folder, stage, size):
+        """PNG of the saved imagery cropped to the area, fitting a square of size pixels."""
+        grid = stage["grid"]
+        # The zoom where the area spans one to two thumbnails, within the overviews.
+        z = max(lowest(stage), grid["zoom"] - int(math.log2(max(1, max(grid["width"], grid["height"]) / size))))
+        scale = 2 ** (grid["zoom"] - z)
+        left, top = grid["left"] / scale, grid["top"] / scale
+        right, bottom = left + grid["width"] / scale, top + grid["height"] / scale
+        xs, ys = range(int(left // 256), math.ceil(right / 256)), range(int(top // 256), math.ceil(bottom / 256))
+        canvas = Image.new("RGBA", (len(xs) * 256, len(ys) * 256))
+        with self.lock:
+            build = self.builds[folder, stage["mode"]]
+        with build:
+            for row, y in enumerate(ys):
+                for column, x in enumerate(xs):
+                    if (image := self.image(folder, stage, z, x, y)) is not None:
+                        canvas.paste(image, (column * 256, row * 256))
+        x0, y0 = xs[0] * 256, ys[0] * 256
+        with canvas, canvas.crop((round(left - x0), round(top - y0), round(right - x0), round(bottom - y0))) as area:
+            area.thumbnail((size, size), Image.Resampling.LANCZOS)
+            return png(area)
+
     def base(self, folder, stage):
         """Lowest saved height, so terrain rises from the flat map around it; callers hold the build lock."""
         version = len(stage["results"])

@@ -157,7 +157,12 @@ def emit(result, as_json):
     elif result.get("folder"):
         if place := result.get("place"):
             print(f"Selected: {place['label']} ({place['id']})")
-        if result["command"] == "satellite":
+        if result["command"] == "game":
+            print(f"Saved game world ({result['chunks']} chunks)")
+            print(result["scene"])
+            for warning in result["warnings"]:
+                print(style(warning, "33"), file=sys.stderr)
+        elif result["command"] == "satellite":
             print(f"Saved satellite image ({result['width']} × {result['height']} px)")
             print(result["path"])
         elif result["command"] == "streetview":
@@ -192,6 +197,13 @@ def main(argv=None):
 
             return dashboard.serve(args.output, args.port, cache_dir=args.cache_dir, refresh=args.refresh,
                                    open_browser=not args.no_browser)
+        if args.command == "game":
+            from src.game import build
+
+            with Progress() as progress:
+                result = build.command(args, progress)
+            emit(result, as_json)
+            return build.view(result["folder"]) if args.view else 0
         if args.command != "capture":
             with Progress() as progress:
                 result = query(args, progress)

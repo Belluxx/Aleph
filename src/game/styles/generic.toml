@@ -1,0 +1,19 @@
+# Fallback for anything unmatched: plain rendered walls with simple surrounds and sills, moderate floors.
+name = "generic"
+archetype = "plain"
+match = {building = ["yes"], era = "any"}
+floor_height = [3.0, 3.4]
+ground_floor_height = [3.4, 4.0]
+bay_width = [2.4, 3.2]
+window = {width = [1.0, 1.4], height = [1.4, 1.9], reveal = 0.2, sill = true, frame = "trim/wood-painted"}
+walls = {"wall/plaster-white" = 3, "wall/plaster-grey" = 2, "wall/plaster-beige" = 2, "wall/brick-red" = 1, "wall/concrete" = 1}
+roofs = {flat = "roof/gravel", pitched = ["roof/tiles-red", "roof/slate"], steep = "roof/slate"}
+trim = "trim/stone"
+glass = "glass/window"
+doors = ["door/wood", "door/metal-glass"]
+shop = "shop/glass"
+ornament = 0.2
+parapet = [0.0, 0.8]
+plinth = {height = 0.45, material = "wall/concrete"}
+balconies = 0.1
+ornaments = {surrounds = 0.5, quoins = 0.1, awnings = 0.4, dormers = 0.4, chimneys = 0.6}

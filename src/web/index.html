@@ -48,6 +48,7 @@
         <div class="heading">
           <h1>Captures <span id="capture-count" class="count"></span></h1>
         </div>
+        <p id="library-error" class="error" hidden></p>
         <ol id="captures" class="captures"></ol>
       </div>
       <footer class="actions">
@@ -197,6 +198,11 @@
           <a class="back" href="#/">← Captures</a>
           <h1 id="capture-title"></h1>
           <p id="capture-meta" class="meta"></p>
+          <div class="tools">
+            <button id="rename-capture" type="button" class="small"><i data-icon="pencil"></i>Rename</button>
+            <button id="reuse-capture" type="button" class="small" title="Start a new capture of this area with these settings"><i data-icon="polygon"></i>Reuse area</button>
+            <button id="delete-capture" type="button" class="small danger"><i data-icon="trash"></i>Delete</button>
+          </div>
         </div>
         <div id="progress" class="block" hidden>
           <p class="label">Capturing</p>
@@ -204,6 +210,28 @@
           <div id="phase" class="progress"><div class="bar"><i></i></div><p class="progress-text"></p></div>
         </div>
         <p id="capture-error" class="error" hidden></p>
+        <div class="block">
+          <h2 class="label">Overview</h2>
+          <dl id="overview" class="facts"></dl>
+        </div>
+        <div class="block game">
+          <h2 class="label">Game world</h2>
+          <p id="game-status" class="detail"></p>
+          <dl id="game-facts" class="facts" hidden></dl>
+          <div class="field"><span>Style</span><select id="game-style" aria-label="Building style"></select></div>
+          <div class="field"><span>Quality</span>
+            <span class="segmented">
+              <label><input type="radio" name="game-quality" value="high" checked><span>High</span></label>
+              <label><input type="radio" name="game-quality" value="draft"><span>Draft</span></label>
+            </span>
+          </div>
+          <div id="game-progress" class="progress" hidden><div class="bar"><i></i></div><p class="progress-text"></p></div>
+          <p id="game-error" class="error" hidden></p>
+          <div class="tools">
+            <button id="game-build" type="button" class="small"><i data-icon="mesh"></i>Build world</button>
+            <button id="game-view" type="button" class="small primary" disabled>Walk in first person</button>
+          </div>
+        </div>
         <div class="block">
           <h2 class="label">Layers</h2>
           <ul id="layers" class="layers"></ul>
@@ -229,6 +257,19 @@
       <div class="buttons">
         <button value="go" class="subtle"></button>
         <button value="" class="primary" autofocus></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="rename">
+    <form novalidate autocomplete="off">
+      <h2>Rename capture</h2>
+      <input type="text" maxlength="120" aria-label="Name">
+      <p class="detail">Leave it empty to show the capture date instead.</p>
+      <p class="error" hidden></p>
+      <div class="buttons">
+        <button type="button" value="" class="subtle">Cancel</button>
+        <button type="submit" class="primary">Save</button>
       </div>
     </form>
   </dialog>

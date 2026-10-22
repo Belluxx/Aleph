@@ -111,6 +111,18 @@ Rebuild outputs from downloaded files, offline:
 alephgeo capture export captures/RUN_FOLDER
 ```
 
+## Build a game world
+
+Rebuild a capture with a 3D mesh as a level you can walk in first person:
+
+```sh
+alephgeo game captures/RUN_FOLDER --view
+```
+
+The mesh only measures the place: ground, roads, buildings, trees, and props are rebuilt with tiling materials. The world is saved in `RUN_FOLDER/game`: `scene.json`, chunks of `--chunk` meters (default: `64`) with three levels of detail, `report.json` with counts and warnings, and the materials it uses. OSM data is extracted first if the capture has none.
+
+`--quality draft` builds massing, roofs, and ground only, for a quick look. `--style NAME` picks a building style instead of choosing one from OSM tags. Settings for one capture go in `RUN_FOLDER/game.toml`. `--view` opens the result in `aleph_view`, which needs [Rust](https://rustup.rs) and this repository's `viewer` folder.
+
 ## Open the dashboard
 
 ```sh

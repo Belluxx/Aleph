@@ -101,7 +101,8 @@ code { font: 11px/1.4 var(--mono); }
 .heading { padding: 20px 0 6px; }
 h1 { font: 600 22px/1.2 var(--sans); letter-spacing: -.015em; }
 .count { color: var(--muted); font: 13px var(--mono); vertical-align: middle; }
-.meta { margin-top: 6px; color: var(--muted); }
+.meta { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; color: var(--muted); }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .back {
   display: inline-block;
   margin-bottom: 10px;
@@ -176,13 +177,18 @@ button:disabled:hover { background: transparent; color: var(--ink); }
 .accent { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .accent:hover { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .small { padding: 3px 8px; font-size: 12px; }
+.danger:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.danger:disabled:hover { border-color: var(--ink); }
+.icon-button { padding: 5px; border-color: transparent; color: var(--muted); }
+.icon-button:hover { background: var(--surface); border-color: var(--line); color: var(--ink); }
+.icon-button[data-action=delete]:hover { border-color: var(--accent); color: var(--accent); }
 /* A quiet choice, for actions the page discourages. */
 .subtle { border-color: transparent; color: var(--muted); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; }
 .subtle:hover { background: transparent; color: var(--ink); }
 .wide { width: 100%; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-input[type=number], input[type=search] {
+input[type=number], input[type=search], input[type=text] {
   width: 76px;
   padding: 4px 6px;
   border: 1px solid var(--line);
@@ -192,8 +198,8 @@ input[type=number], input[type=search] {
   font: 12px var(--mono);
   text-align: right;
 }
-input[type=number]:hover, input[type=search]:hover { border-color: var(--muted); }
-input[type=number]:focus, input[type=search]:focus { border-color: var(--ink); outline: none; }
+input[type=number]:hover, input[type=search]:hover, input[type=text]:hover { border-color: var(--muted); }
+input[type=number]:focus, input[type=search]:focus, input[type=text]:focus { border-color: var(--ink); outline: none; }
 input[type=number] { appearance: textfield; -moz-appearance: textfield; }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -366,27 +372,63 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 
 /* Library */
 
-.captures li { border-top: 1px solid var(--line); }
-.captures li:first-child { border-top: 0; }
+.captures { margin: 0 -10px; }
+.captures .card { position: relative; border-top: 1px solid var(--line); }
+.captures .card:first-child { border-top: 0; }
 .capture {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
   gap: 3px 12px;
+  align-items: center;
   width: 100%;
-  padding: 12px 0;
+  padding: 12px 10px;
   border: 0;
   background: none;
   text-align: left;
   font-weight: 400;
 }
-.capture:hover, .capture:focus-visible, .capture.hover { background: none; color: var(--ink); }
+.capture:hover, .capture:focus-visible, .capture.hover { background: var(--surface); color: var(--ink); }
 .capture:hover .when, .capture.hover .when { text-decoration: underline; text-underline-offset: 3px; }
-.when { font: 600 13.5px/1.3 var(--sans); }
-.state { font: 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); align-self: center; }
-.state.failed, .state.running { color: var(--accent); }
-.capture .detail { grid-column: 1 / 3; }
-.capture .bar { grid-column: 1 / 3; margin-top: 6px; height: 2px; }
-.empty { padding: 24px 0; color: var(--muted); }
+.thumb {
+  grid-row: 1 / 4;
+  align-self: start;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  object-fit: cover;
+}
+.thumb path { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--ink); stroke-width: 1; stroke-linejoin: round; }
+.capture:hover .thumb path, .capture.hover .thumb path { stroke: var(--accent); }
+.when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 13.5px/1.3 var(--sans); }
+.state { font: 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.state.failed, .state.running, .state.unreadable { color: var(--accent); }
+.capture .detail { grid-column: 2 / 4; }
+.sources { grid-column: 2 / 4; display: flex; gap: 8px; min-height: 22px; align-items: center; color: var(--muted); }
+.sources .icon { width: 14px; height: 14px; }
+.capture .bar { grid-column: 2 / 4; margin-top: 4px; height: 2px; }
+/* Shown on hover or focus, and always where nothing hovers. */
+.card-actions { position: absolute; right: 8px; bottom: 9px; display: flex; gap: 2px; opacity: 0; }
+.card:hover .card-actions, .card-actions:focus-within { opacity: 1; }
+@media (hover: none) { .card-actions { opacity: 1; } }
+.empty { display: grid; gap: 4px; margin: 0 10px; padding: 18px; border: 1px dashed var(--line); }
+
+.game { display: grid; gap: 10px; }
+.game > .label { margin-bottom: 0; }
+.game .tools { margin-top: 2px; }
+select {
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: 12px var(--sans);
+}
+select:hover { border-color: var(--muted); }
+select:focus { border-color: var(--ink); outline: none; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; text-align: right; font: 12px var(--mono); }
 
 /* Layers and files */
 
@@ -402,6 +444,8 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 18px; border: 0; bord
 }
 .toggle .value, .files .value { margin-left: auto; color: var(--muted); font: 11px var(--mono); }
 .files li { display: flex; gap: 10px; padding: 4px 0; font: 12px var(--mono); }
+.files a { text-decoration: none; border-bottom: 1px solid var(--line); }
+.files a:hover { color: var(--accent); border-color: var(--accent); }
 .files + .root { margin-top: 10px; }
 
 /* Map */
@@ -461,6 +505,8 @@ dialog h2 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; fo
 dialog h2 .icon { width: 20px; height: 20px; }
 dialog .stages { margin-bottom: 12px; padding: 4px 0; border-block: 1px solid var(--line); }
 dialog .buttons { display: flex; justify-content: space-between; gap: 8px; margin-top: 18px; }
+#rename input { width: 100%; margin: 6px 0 8px; padding: 8px 10px; font: 14px var(--sans); text-align: left; }
+#rename .error { margin-top: 10px; }
 
 .viewer {
   position: absolute;

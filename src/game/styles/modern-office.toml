@@ -1,0 +1,20 @@
+# Offices and public buildings since the 1990s: stone skins with deep punched windows, or glass curtain walls;
+# tall ground floors with glazed fronts; flat roofs behind a parapet.
+name = "modern-office"
+archetype = "stone"
+match = {building = ["office", "commercial", "government", "public", "hotel", "retail", "civic", "embassy"], era = "new"}
+floor_height = [3.5, 3.9]
+ground_floor_height = [4.5, 5.5]
+bay_width = [1.5, 1.9]
+window = {width = [1.15, 1.4], height = [2.2, 2.6], reveal = 0.32, sill = false, frame = "trim/metal-dark"}
+walls = {"wall/limestone" = 3, "wall/glass-curtain" = 2, "wall/ashlar-sandstone" = 2, "wall/concrete" = 1, "wall/metal-panel" = 1}
+roofs = {flat = "roof/membrane", pitched = ["roof/zinc-standing-seam", "roof/copper-green"], steep = "roof/zinc-standing-seam"}
+trim = "stone/sandstone-smooth"
+glass = "glass/window"
+doors = ["door/metal-glass"]
+shop = "shop/glass"
+ornament = 0.0
+parapet = [0.6, 1.1]
+plinth = {height = 0.5, material = "stone/granite-dark"}
+balconies = 0.0
+ornaments = {}

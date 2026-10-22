@@ -2,6 +2,8 @@
 
 import json
 import mimetypes
+import shutil
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -10,12 +12,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import capture, layers, places
-from .common import CachedClient, Client, RequestError, contained, now
+from .game import build as game, library
+from .common import CachedClient, Client, RequestError, contained, now, write_json
 from .geo import collection, coordinate, extent, feature, lines, vertices
 
 WEB = Path(__file__).resolve().parent / "web"
 PHOTO_KEYS = ("sequence", "filename", "heading", "side", "imagery_date", "pano_id", "path_name", "streetview_url")
 OUTPUTS = ("satellite.tif", "satellite.png", "terrain.tif", "map.osm", "mesh.glb")
+NAME_LIMIT = 120
+THUMBNAIL = 96  # Pixels along the longer side of library thumbnails, twice their shown size.
 
 
 class Stopped(KeyboardInterrupt):
@@ -46,7 +51,7 @@ class Job:
 
     def progress(self, phase, done=0, total=None, unit=None):
         # Captures only stop between requests, so their partial exports can still finish.
-        if self.kind == "plan":
+        if self.kind in ("plan", "game"):
             self.check()
         self.phase, self.done, self.total, self.unit = phase, done, total, unit
 
@@ -122,10 +127,24 @@ def summary(identity, run, live):
             info.update(zoom=stage["grid"]["zoom"], minzoom=layers.lowest(stage))
     state = "interrupted" if run["state"] == "running" and not live else run["state"]
     # Polygons go to the browser in GeoJSON order, [lon, lat].
-    return dict(id=identity, bounds=extent(run["polygon"]), polygon=[point[::-1] for point in run["polygon"]],
-                started_at=run["started_at"],
+    return dict(id=identity, name=run.get("name", ""), bounds=extent(run["polygon"]),
+                polygon=[point[::-1] for point in run["polygon"]], started_at=run["started_at"],
                 finished_at=run.get("finished_at"),
                 state=state, error=run.get("error"), options=run["options"], stages=stages)
+
+
+def game_summary(folder):
+    """Key numbers of the last game world build, or None."""
+    try:
+        report = json.loads((folder / "game" / "report.json").read_text())
+    except (OSError, ValueError):
+        return None
+    counts = report.get("counts", {})
+    trees = sum(n for name, n in counts.get("assets", {}).items() if name.startswith("tree/"))
+    return dict(built_at=report.get("built_at"), quality=report.get("quality"), style=report.get("style"),
+                chunks=counts.get("chunks"), buildings=counts.get("buildings"), landmarks=counts.get("landmarks"),
+                trees=trees, props=counts.get("instances", 0) - trees,
+                triangles=report.get("triangles", {}).get("total", {}).get("lod0"), warnings=report.get("warnings", []))
 
 
 def area_and_options(body):
@@ -202,8 +221,9 @@ class Dashboard:
             return None
         state = dict(id=job.id, kind=job.kind, state=job.state, phase=job.phase, done=job.done, total=job.total,
                      unit=job.unit, error=job.error, stopping=job.stop.is_set())
-        if job.kind == "capture":
+        if job.kind in ("capture", "game"):
             state["capture"] = job.folder.name
+        if job.kind == "capture":
             state["seconds"] = capture.estimate(job.run)["seconds"]
             state["stages"] = {stage["mode"]: dict(done=len(stage["results"]), total=capture.total(stage))
                                for stage in job.run["stages"]}
@@ -219,12 +239,20 @@ class Dashboard:
             raise FileNotFoundError("Capture not found.")
         return folder
 
+    def capturing(self, folder):
+        job = self.job
+        return bool(job and job.kind == "capture" and job.folder == folder and job.state == "running")
+
+    def working(self, folder):
+        """Whether a capture or a game build is writing into folder."""
+        job = self.job
+        return bool(job and job.kind in ("capture", "game") and job.folder == folder and job.state == "running")
+
     def load(self, identity):
         """The live run while it downloads, otherwise its manifest, reloaded when it changes."""
         folder = self.folder(identity)
-        job = self.job
-        if job and job.kind == "capture" and job.folder == folder and job.state == "running":
-            return folder, job.run, True
+        if self.capturing(folder):
+            return folder, self.job.run, True
         stat = (folder / "manifest.json").stat()
         signature = stat.st_mtime_ns, stat.st_size
         cached = self.runs.get(identity)
@@ -253,7 +281,31 @@ class Dashboard:
     def detail(self, identity):
         folder, run, live = self.load(identity)
         files = {name: (folder / name).stat().st_size for name in OUTPUTS if (folder / name).is_file()}
-        return dict(summary(identity, run, live), folder=str(folder), files=files)
+        size = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
+        return dict(summary(identity, run, live), folder=str(folder), files=files, size=size, game=game_summary(folder))
+
+    def rename(self, identity, name):
+        if not isinstance(name, str) or len(name.strip()) > NAME_LIMIT:
+            raise ValueError(f"Use a name of up to {NAME_LIMIT} characters.")
+        folder = self.folder(identity)
+        # The lock keeps a resume from starting, and writing the manifest, while this one is written.
+        with self.lock:
+            if self.capturing(folder):
+                raise Busy("Stop the capture before renaming it.")
+            run = capture.load(folder, check_files=False)
+            run["name"] = name.strip()
+            write_json(folder / "manifest.json", run)
+        return self.detail(identity)
+
+    def delete(self, identity):
+        folder = self.folder(identity)
+        with self.lock:
+            if self.working(folder):
+                raise Busy("Stop the running task on this capture before deleting it.")
+            shutil.rmtree(folder)
+        self.runs.pop(identity, None)
+        self.osm.pop(identity, None)
+        return dict(deleted=identity)
 
     def photos(self, identity, after):
         try:
@@ -291,11 +343,39 @@ class Dashboard:
         # Saved patches never change. Built tiles are not cached, so rendering changes show up at once.
         return *tile, 86400 if mode == "satellite" and z == stage["grid"]["zoom"] else 0
 
+    def thumbnail(self, identity):
+        folder, stage, _ = self.stage(identity, "satellite")
+        if not stage["results"]:
+            raise FileNotFoundError("No saved imagery yet.")
+        # Its URL carries the saved count, so browsers may keep it.
+        return self.tiles.thumbnail(folder, stage, THUMBNAIL), "image/png", 86400
+
     def file(self, identity, path):
         target = contained(self.folder(identity), "/".join(path))
         if not target.is_file():
             raise FileNotFoundError("File not found.")
         return target.read_bytes(), mimetypes.guess_type(target.name)[0] or "application/octet-stream", 86400
+
+    # Game worlds
+
+    def build_game(self, identity, body):
+        folder = self.folder(identity)
+        config = game.settings(folder, body.get("style"), body.get("quality"), cache_dir=self.cache_dir)
+
+        def work(job):
+            game.run(folder, config, job.progress)
+
+        return self.start("game", work, folder)
+
+    def view_game(self, identity):
+        folder = self.folder(identity)
+        if not (folder / "game" / "scene.json").is_file():
+            raise FileNotFoundError("Build the game world first.")
+        # The viewer opens its own window and outlives this request; the first start compiles it.
+        with (folder / "game" / "viewer.log").open("wb") as log:
+            subprocess.Popen([*game.viewer(), str(folder / "game")], stdout=log, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        return dict(started=True)
 
     # Routes
 
@@ -308,7 +388,7 @@ class Dashboard:
             case "GET", ["api", "icons"]:
                 return {path.stem: path.read_text() for path in (WEB / "icons").glob("*.svg")}
             case "GET", ["api", "config"]:
-                return dict(root=str(self.root), defaults=capture.DEFAULT_OPTIONS)
+                return dict(root=str(self.root), defaults=capture.DEFAULT_OPTIONS, styles=library.styles())
             case "GET", ["api", "job"]:
                 return self.job_state()
             case "GET", ["api", "preview"]:
@@ -336,6 +416,8 @@ class Dashboard:
                 return self.tile(identity, "terrain", z, x, y)
             case "GET", ["api", "captures", identity, "dem", z, x, y]:
                 return self.tile(identity, "terrain", z, x, y, dem=True)
+            case "GET", ["api", "captures", identity, "thumbnail"]:
+                return self.thumbnail(identity)
             case "GET", ["api", "captures", identity, "files", *path] if path:
                 return self.file(identity, path)
             case "POST", ["api", "estimate"]:
@@ -356,6 +438,14 @@ class Dashboard:
                 return self.stop()
             case "POST", ["api", "captures", identity, "resume"]:
                 return self.resume(identity)
+            case "POST", ["api", "captures", identity, "rename"]:
+                return self.rename(identity, body.get("name"))
+            case "POST", ["api", "captures", identity, "delete"]:
+                return self.delete(identity)
+            case "POST", ["api", "captures", identity, "game"]:
+                return self.build_game(identity, body)
+            case "POST", ["api", "captures", identity, "game", "view"]:
+                return self.view_game(identity)
         raise FileNotFoundError("Not found.")
 
 

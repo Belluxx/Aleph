@@ -1,0 +1,21 @@
+# Berlin perimeter blocks of 1870–1914: rendered or sandstone facades with stucco window surrounds, hoods and
+# pediments, a rusticated ground floor, string courses and a deep cornice; tall floors; tile, slate or zinc roofs.
+name = "berlin-gruenderzeit"
+archetype = "classical"
+match = {building = ["apartments", "residential", "house", "yes"], era = "old"}
+floor_height = [3.3, 3.7]
+ground_floor_height = [4.0, 4.6]
+bay_width = [2.7, 3.2]
+window = {width = [1.15, 1.35], height = [1.9, 2.3], reveal = 0.24, sill = true, frame = "trim/wood-painted"}
+walls = {"wall/plaster-beige" = 3, "wall/plaster-white" = 2, "wall/plaster-yellow" = 1, "wall/plaster-grey" = 1, "wall/ashlar-sandstone" = 1, "wall/brick-yellow" = 1}
+roofs = {flat = "roof/gravel", pitched = ["roof/slate", "roof/tiles-red", "roof/zinc-standing-seam"], steep = "roof/zinc-standing-seam"}
+trim = "wall/render-smooth"
+glass = "glass/window"
+doors = ["door/wood"]
+shop = "shop/glass"
+ornament = 0.7
+parapet = [0.0, 0.0]
+plinth = {height = 0.7, material = "stone/granite-dark"}
+balconies = 0.45
+# Chances (0–1) of each ornament per building; chimneys is stacks per 110 m² of roof.
+ornaments = {alternate = 0.4, arches = 0.4, quoins = 0.35, pilasters = 0.25, sill_course = 0.5, aprons = 0.5, rails = 0.35, rustication = 0.8, awnings = 0.5, dormers = 0.6, chimneys = 1.0}

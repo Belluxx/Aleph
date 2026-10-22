@@ -1,0 +1,11 @@
+[package]
+name = "aleph_view"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aleph_scene = { path = "../aleph_scene" }
+bevy = { workspace = true }
+avian3d = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

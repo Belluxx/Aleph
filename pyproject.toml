@@ -15,7 +15,8 @@ alephgeo = "aleph:main"
 
 [tool.setuptools]
 py-modules = ["aleph"]
-packages = ["src"]
+packages = ["src", "src.game"]
 
 [tool.setuptools.package-data]
 src = ["web/*", "web/icons/*"]
+"src.game" = ["styles/*.toml"]

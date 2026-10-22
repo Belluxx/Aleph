@@ -1,0 +1,19 @@
+# East German prefabricated slab housing (WBS 70 and similar): concrete panels, uniform windows, flat roofs.
+name = "plattenbau"
+archetype = "panel"
+match = {building = ["apartments", "residential", "dormitory"], era = "gdr"}
+floor_height = [2.8, 2.8]
+ground_floor_height = [2.8, 3.2]
+bay_width = [3.0, 3.6]
+window = {width = [1.2, 1.5], height = [1.4, 1.5], reveal = 0.14, sill = true, frame = "trim/wood-painted"}
+walls = {"wall/concrete-panel" = 4, "wall/plaster-grey" = 2, "wall/plaster-yellow" = 1, "wall/plaster-white" = 1}
+roofs = {flat = "roof/membrane", pitched = ["roof/membrane"]}
+trim = "wall/concrete"
+glass = "glass/window"
+doors = ["door/metal-glass"]
+shop = "shop/glass"
+ornament = 0.0
+parapet = [0.3, 0.6]
+plinth = {height = 0.5, material = "wall/concrete"}
+balconies = 0.5
+ornaments = {}
