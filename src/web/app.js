@@ -3,6 +3,7 @@
 const BASEMAP = "https://tiles.openfreemap.org/styles/positron";
 const EMPTY = {type: "FeatureCollection", features: []};
 const NAMES = {streetview: "Street View", satellite: "Satellite", osm: "OSM map", terrain: "Terrain", mesh: "3D mesh"};
+const GOOGLE = ["streetview", "satellite", "mesh"];
 const STATES = {planned: "Planned", running: "Capturing", interrupted: "Interrupted", stopped: "Stopped",
                 failed: "Failed", complete: "Complete", unreadable: "Unreadable"};
 const NUMBERS = ["step", "fov", "sphere_zoom", "satellite_zoom", "terrain_zoom", "mesh_level", "delay",
@@ -758,6 +759,7 @@ function readForm() {
 function updateForm() {
   const options = readForm();
   for (const fieldset of $$(".source")) fieldset.classList.toggle("on", options.include.includes(fieldset.dataset.source));
+  $("#google-notice").hidden = !options.include.some(mode => GOOGLE.includes(mode));
   for (const field of $$("[data-camera]")) field.hidden = (field.dataset.camera === "sphere") !== options.full_sphere;
   for (const input of $$(".range input")) {
     const range = input.parentElement, min = Number(input.min), max = Number(input.max);
