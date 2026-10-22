@@ -16,10 +16,15 @@ Aleph does two things:
 - Lets you draw a rectangle or polygon on the map and downloads **everything** inside it (buildings, elevation, HD satellite imagery, Street View photos, textured 3D models).
 - Provides any of the above information for **specific points** on Earth, on the fly, via the CLI.
 
-This was born as a way to let LLMs quickly gather information from the physical world, but you can just use it to have piece of the Earth on your laptop and do whatever you want with it.
+This was born as a way to let LLMs quickly gather information from the physical world, but you can just use it to have piece of the Earth on your laptop.
 
-> [!WARNING]  
-> This tool uses undocumented APIs so it may break or hit rate limits.
+> [!CAUTION]  
+> Data licenses:
+> - **Street View, satellite imagery, 3D meshes**: © Google and its providers. Downloading them goes against Google's terms. Not affiliated with Google. You are responsible for how you use this tool and the data it downloads.
+> - **OSM data and geocoding**: [ODbL](https://opendatacommons.org/licenses/odbl/). Commercial use allowed with "© OpenStreetMap contributors" credit. Shared modified databases must stay ODbL.
+> - **Terrain**: [AWS Terrain Tiles](https://github.com/tilezen/joerd/blob/master/docs/attribution.md), open sources. Commercial use allowed with the credits listed there.
+> 
+> Also, this tool uses undocumented APIs so it may break or hit rate limits.
 
 <p align="center">
   <img src="resources/show.svg" width="800">

@@ -65,6 +65,11 @@ Keep mesh/nodes/ for resume and offline export.
 Filenames in the manifest and GeoJSON are relative to this run folder.
 See manifest.json for settings, sources, imagery dates, and coverage notes.
 
+Credits:
+Street View, satellite imagery, and meshes: (c) Google and its providers.
+Map data: (c) OpenStreetMap contributors, ODbL (https://www.openstreetmap.org/copyright).
+Terrain: AWS Terrain Tiles; credit its sources (https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+
 Keep this folder together. Continue with: alephgeo capture resume FOLDER
 Rebuild images and metadata offline with: alephgeo capture export FOLDER
 """

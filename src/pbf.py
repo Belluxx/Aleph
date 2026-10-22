@@ -806,7 +806,10 @@ class PBF:
         selected = self.select(area, xml=True, polygon=polygon)
         south, west, north, east = area
         with atomic_path(output) as temporary, temporary.open("wb") as stream:
-            stream.write((f'<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="Aleph">\n'
+            stream.write((f'<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="Aleph"'
+                          ' copyright="OpenStreetMap and contributors"'
+                          ' attribution="https://www.openstreetmap.org/copyright"'
+                          ' license="https://opendatacommons.org/licenses/odbl/1-0/">\n'
                           f'<bounds minlat="{south}" minlon="{west}" maxlat="{north}" maxlon="{east}"/>\n').encode())
             written = 0
             for chunk in self.nodes(selected[0], "xml"):
