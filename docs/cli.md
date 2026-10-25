@@ -17,7 +17,7 @@ Run `alephgeo COMMAND --help` for the full option list. See the [README](../READ
 ## Basics
 
 - **Coordinates** are `LAT LON` in decimal degrees. Rectangles are `S W N E`. Distances are in meters, angles in degrees clockwise from north.
-- **Place names** work anywhere `--place` or `--street` is accepted. Include a city or country. If the name is ambiguous, Aleph lists the matches; pick one with `--match TYPE/ID` (for example `--match way/24365346`) or take the top result with `--best-match`.
+- **Place names** work anywhere `--place` or `--street` is accepted. Include a city or country. If the name is ambiguous, Aleph lists the matches; pick one with `--match TYPE/ID` (for example `--match relation/1834818`) or take the top result with `--best-match`.
 - **Output**: `-o DIR` sets the parent folder (default: current directory). Every download goes into a new `aleph-*` folder inside it.
 - **Scripting**: `--json` prints one JSON result on stdout. See [Scripting](#scripting).
 
@@ -46,8 +46,8 @@ Results show the ID to pass to `--match`.
 
 ```sh
 alephgeo streetview --place "Colosseum, Rome" --best-match
-alephgeo streetview --at 41.8902 12.4922 --heading 90 --pitch 10 --fov 60
-alephgeo streetview --at 41.8902 12.4922 --look-at 41.8903 12.4924
+alephgeo streetview --at 41.8909 12.4919 --heading 180 --pitch 10 --fov 60
+alephgeo streetview --at 41.8909 12.4919 --look-at 41.8902 12.4922
 alephgeo streetview --pano-id PANO_ID
 ```
 
