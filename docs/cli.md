@@ -1,131 +1,224 @@
-# CLI guide
-
-[Install Aleph](../README.md#install)
-
-## Download a photo or satellite image
+# CLI reference
 
 ```sh
-# Street View near a named place
-alephgeo streetview --place "Colosseum, Rome" --best-match -o captures
-
-# A satellite image covering a 200 × 200 meter square
-alephgeo satellite --place "Colosseum, Rome" --best-match --size 200 -o captures
+alephgeo COMMAND [OPTIONS]
 ```
 
-`--best-match` picks the first search result. Omit it to list matches, then choose with `--match TYPE/ID`.
+| Command | What it does |
+| --- | --- |
+| [`resolve`](#resolve) | Search places, reverse geocode coordinates, list nearby points of interest |
+| [`streetview`](#streetview) | Download one Street View photo or a sequence along a street |
+| [`satellite`](#satellite) | Download a satellite image of a point, rectangle, or tile |
+| [`capture`](#capture) | Download everything inside an area: Street View, satellite, OSM, terrain, 3D mesh |
+| [`dashboard`](#dashboard) | Draw, capture, and explore areas in the browser |
 
-`-o captures` saves downloads under `captures/` instead of the current directory.
+Run `alephgeo COMMAND --help` for the full option list. See the [README](../README.md#install) to install.
 
-Satellite captures produce `satellite.png` and `satellite.tif` (Cloud Optimized GeoTIFF), with transparent gaps for missing imagery.
+## Basics
 
-- `--tile-format jpg|png` sets the saved satellite tile format (default: `jpg`); both merged outputs are always generated.
-- `--streetview-format jpg|png` sets the Street View photo format (default: `jpg`).
-- `--full-sphere` saves one 360° panorama per stop. `--sphere-zoom 0–5` sets resolution (default: `3`).
+- **Coordinates** are `LAT LON` in decimal degrees. Rectangles are `S W N E`. Distances are in meters, angles in degrees clockwise from north.
+- **Place names** work anywhere `--place` or `--street` is accepted. Include a city or country. If the name is ambiguous, Aleph lists the matches; pick one with `--match TYPE/ID` (for example `--match way/24365346`) or take the top result with `--best-match`.
+- **Output**: `-o DIR` sets the parent folder (default: current directory). Every download goes into a new `aleph-*` folder inside it.
+- **Scripting**: `--json` prints one JSON result on stdout. See [Scripting](#scripting).
 
-These options also work with `capture create`.
-
-## Use coordinates
-
-Coordinates are `LAT LON`; distances are in meters.
+## resolve
 
 ```sh
-# Street View facing east (0 = north, 90 = east, 180 = south, 270 = west)
-alephgeo streetview --at 41.8902 12.4922 --heading 90 -o captures
-
-# Aim the camera at a specific point
-alephgeo streetview --at 41.8902 12.4922 --look-at 41.8903 12.4924 -o captures
-
-# Satellite image around a point
-alephgeo satellite --at 41.8902 12.4922 --size 500 -o captures
-
-# Satellite image of a rectangle: south west north east
-alephgeo satellite --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
+alephgeo resolve "Colosseum, Rome"                          # search by name
+alephgeo resolve "Via del Corso, Rome" --streets            # streets only
+alephgeo resolve --at 41.8902 12.4922                       # reverse geocode
+alephgeo resolve --at 41.8902 12.4922 --nearby --radius 200 # nearby POIs
 ```
 
-Street View searches within 50 meters; use `--radius 200` to search farther.
+| Option | Description |
+| --- | --- |
+| `QUERY` or `--at LAT LON` | Name to search, or coordinates to look up |
+| `--streets` | Only return streets (name search) |
+| `--nearby` | List points of interest around `--at` instead of the address |
+| `--radius M` | Nearby search radius, up to 5000 (default: 100) |
+| `--limit N` | Maximum results, up to 50 (default: 10) |
 
-## Find places
+Results show the ID to pass to `--match`.
+
+## streetview
+
+### Single view
 
 ```sh
-# Look up a name and its coordinates
-alephgeo resolve "Colosseum, Rome"
-
-# Find the address or place at these coordinates
-alephgeo resolve --at 41.8902 12.4922
-
-# List nearby points of interest
-alephgeo resolve --at 41.8902 12.4922 --nearby --radius 200
+alephgeo streetview --place "Colosseum, Rome" --best-match
+alephgeo streetview --at 41.8902 12.4922 --heading 90 --pitch 10 --fov 60
+alephgeo streetview --at 41.8902 12.4922 --look-at 41.8903 12.4924
+alephgeo streetview --pano-id PANO_ID
 ```
 
-## Take photos along a street
+Aleph picks the nearest panorama within `--radius` (default: 50 m) of the point.
+
+| Option | Description |
+| --- | --- |
+| `--at`, `--place`, `--pano-id` | Where to look: coordinates, place name, or exact panorama ID |
+| `--radius M` | Maximum distance to the panorama (default: 50) |
+| `--heading DEG` | Camera direction: 0 north, 90 east, 180 south, 270 west (default: 0) |
+| `--look-at LAT LON` | Turn the camera toward a point instead of using `--heading` |
+
+### Along a street
 
 ```sh
-# Ten stops total, looking forward
-alephgeo streetview --street "Via del Corso, Rome" --best-match --stops 10 -o captures
+# 10 photos spread along the whole street, looking forward
+alephgeo streetview --street "Via del Corso, Rome" --best-match --stops 10
 
-# Both sides, targeting 10-meter spacing
-alephgeo streetview --street "Via del Corso, Rome" --best-match --step 10 --view both -o captures
+# A stop every 10 m, photographing both sides
+alephgeo streetview --street "Via del Corso, Rome" --best-match --step 10 --view both
 ```
 
-Use `--stops N` for a total count or `--step METERS` for spacing. All street sections are included; `--route N` selects one by its number in `result.json`.
+| Option | Description |
+| --- | --- |
+| `--street NAME` | Street to follow from end to end |
+| `--stops N` or `--step M` | Total number of stops, or target spacing between them (one is required) |
+| `--view` | `forward` (default), `backward`, `left`, `right`, or `both` (left and right) |
+| `--route N` | Only capture section `N`; sections are numbered in `result.json` (default: all) |
+| `--reverse` | Walk each section in the opposite direction |
 
-`--view` accepts `forward`, `backward`, `left`, `right`, or `both`. Add `--reverse` to reverse each section's direction.
+Stops without coverage are skipped and listed as gaps in `result.json`.
 
-## Download an area
+### Camera and format
 
-Capture Street View, satellite imagery, OSM data, and terrain inside a rectangle:
+These apply to both modes.
+
+| Option | Description |
+| --- | --- |
+| `--pitch DEG` | Vertical angle, positive up (default: 0) |
+| `--fov DEG` | Horizontal field of view, 5–175 (default: 75) |
+| `--full-sphere` | Save the full 360° panorama instead of a photo; heading, pitch, and fov are ignored |
+| `--sphere-zoom 0–5` | Panorama resolution, capped at the highest available (default: 3) |
+| `--streetview-format` | `jpg` (default) or `png` |
+| `--workers N` | Parallel requests, 1–64 (default: 8) |
+
+Output: numbered photos (`001.jpg`, …) and `result.json` with each photo's panorama ID, location, date, and camera settings.
+
+## satellite
 
 ```sh
+alephgeo satellite --place "Colosseum, Rome" --best-match           # 200 m square
+alephgeo satellite --at 41.8902 12.4922 --size 500 --zoom 20        # 500 m square
+alephgeo satellite --bbox 41.8895 12.4910 41.8910 12.4940           # rectangle
+alephgeo satellite --tile 19/280337/194891                          # one map tile
+```
+
+| Option | Description |
+| --- | --- |
+| `--at`, `--place`, `--bbox S W N E`, `--tile Z/X/Y` | Area to download |
+| `--size M` | Width of the square around `--at` or `--place` (default: 200) |
+| `--zoom 1–21` | Detail level; 19 is about 0.3 m/px at the equator (default: 19). Not used with `--tile` |
+| `--tile-format` | Format of the saved tiles: `jpg` (default) or `png` |
+| `--workers N` | Parallel requests, 1–64 (default: 8) |
+
+Output: `satellite.png`, `satellite.tif` (lossless Cloud Optimized GeoTIFF, EPSG:3857), `result.json` with the exact bounds, and the source tiles. Missing imagery is transparent.
+
+## capture
+
+Download several sources for one area into a single folder that can be resumed and rebuilt.
+
+### capture create
+
+```sh
+# Rectangle with the default sources
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures
+
+# Any polygon: corners in order as LAT LON pairs (edges must not cross)
+alephgeo capture create --polygon 41.8895 12.4910 41.8910 12.4915 41.8905 12.4940 41.8893 12.4932
+
+# Only the 3D mesh and satellite image
+alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources mesh satellite
 ```
 
-The command shows an estimate and asks before downloading. Add `--yes` to skip the prompt, or `--plan` to save a plan for later.
+Aleph prints a plan with a time estimate and asks before downloading. `--yes` skips the prompt; `--plan` saves the plan without downloading, to start later with `capture resume`.
 
-To capture any other shape, use `--polygon` with its corners in order as `LAT LON` pairs:
+`--sources` picks any of:
+
+| Source | Output | Settings |
+| --- | --- | --- |
+| `streetview` | Photos along the roads in the area, both sides | `--depth`: `main` roads, `roads` (default), or `all` paths<br>`--step M`: spacing (default: 30)<br>`--fov`, `--full-sphere`, `--sphere-zoom`, `--streetview-format` as in [streetview](#camera-and-format) |
+| `satellite` | `satellite.png` and `satellite.tif` | `--satellite-zoom 1–21` (default: 18)<br>`--tile-format jpg\|png` |
+| `osm` | `map.osm`: buildings, roads, water, and all other OpenStreetMap data | — |
+| `terrain` | `terrain.tif`: elevation in meters, EPSG:3857 | `--terrain-zoom 1–14` (default: 14) |
+| `mesh` | `mesh.glb`: Google Earth's textured 3D model | `--mesh-level 1–22` (default: 21) |
+
+The first four are the default; `mesh` must be requested.
+
+Everything stays inside the polygon (satellite pixels outside it are transparent) except terrain, which covers the bounding box.
+
+**Mesh details.** Each level halves the texel size: 22 is about 4 cm per texel and needs about four times as many downloads as 21. Coordinates are meters from the center of the bounding box (x east, y up, z south), with the lowest point at y = 0. The model is split into objects of up to 64 tiles, each keeping its original texture.
+
+**Speed.** `--streetview-workers`, `--satellite-workers`, `--terrain-workers`, and `--mesh-workers` set parallel requests per source, 1–64 (default: 8). `--delay SECONDS` pauses between requests and makes them sequential.
+
+### capture resume
 
 ```sh
-alephgeo capture create --polygon 41.8895 12.4910 41.8910 12.4915 41.8905 12.4940 41.8893 12.4932 -o captures
+alephgeo capture resume captures/aleph-20261025T101500Z-abc123
 ```
 
-Street View, satellite imagery, OSM data, and the 3D mesh stay inside the polygon; satellite pixels outside it are transparent. Terrain covers its bounding box. Edges must not cross.
+Continues a stopped capture or starts a saved plan. Already downloaded files are kept. Accepts `--yes`.
 
-Use `--sources` to select `streetview`, `satellite`, `osm`, or `terrain`, or a combination. These four are the default.
-
-Add `mesh` for Google Earth's textured 3D model of the area, saved as `mesh.glb`:
+### capture export
 
 ```sh
-alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 --sources mesh satellite -o captures
+alephgeo capture export captures/aleph-20261025T101500Z-abc123
 ```
 
-`--mesh-level 1–22` sets the detail (default: `21`). Each level halves the texel size; `22` is the most detailed (about 4 cm per texel) and needs about four times as many downloads as `21`. Coordinates in `mesh.glb` are meters from the center of the area's bounding box: x east, y up, z south, with the lowest point at y = 0. The file is split into objects of up to 64 tiles, and each tile keeps its original texture.
+Rebuilds the merged images, mesh, and metadata from the downloaded files, offline.
 
-Resume a capture or start a saved plan using its printed run folder:
+### Capture folder
 
-```sh
-alephgeo capture resume captures/RUN_FOLDER
+```
+aleph-20261025T101500Z-abc123/
+├── manifest.json       settings, sources, imagery dates, coverage notes
+├── README.txt          file guide and data credits
+├── satellite.png/.tif  merged satellite image
+├── terrain.tif         merged elevation
+├── mesh.glb            3D model
+├── map.osm             OpenStreetMap data
+├── streetview/         photos/, photos.geojson, paths.geojson, plan.svg
+├── satellite/          patches/, patches.geojson, plan.svg
+├── terrain/tiles/      source tiles, kept for resume and export
+└── mesh/nodes/         source nodes, kept for resume and export
 ```
 
-Rebuild outputs from downloaded files, offline:
-
-```sh
-alephgeo capture export captures/RUN_FOLDER
-```
-
-## Open the dashboard
+## dashboard
 
 ```sh
 alephgeo dashboard -o captures
 ```
 
-It lists the captures in `captures`, including ones made with `capture create`, and can resume stopped ones. `--port` changes the local port (default: `8100`) and `--no-browser` skips opening a tab. Quitting while a capture runs stops it so it can be resumed later.
+Opens `http://127.0.0.1:8100` in your browser. Draw a rectangle or polygon, choose sources and settings, check the preview and estimate, and start the capture. Open any capture in `captures`, including ones made with `capture create`, to toggle layers, explore the mesh or terrain in 3D, or resume it. Quitting during a capture stops it so it can be resumed later.
 
-## Use in scripts
+| Option | Description |
+| --- | --- |
+| `-o DIR` | Folder holding captures (default: current directory) |
+| `--port N` | Local port (default: 8100) |
+| `--no-browser` | Don't open a browser tab |
 
-Add `--json` for one JSON result on stdout; progress stays on stderr.
+## Network and cache
+
+| Option | Commands | Description |
+| --- | --- | --- |
+| `--cache-dir DIR` | all except `capture export` | Response cache (default: `~/.cache/aleph`, or `$XDG_CACHE_HOME/aleph`) |
+| `--refresh` | all except `capture export` | Ignore cached responses and redownload OSM regional files |
+| `--delay SECONDS` | `resolve`, `streetview`, `satellite`, `capture create` | Pause between requests (default: 0) |
+| `--geocoder URL` | `resolve`, `streetview`, `satellite` | Photon geocoder server, also set with `ALEPH_GEOCODER_URL` |
+
+OSM data comes from Geofabrik regional extracts, which are cached and reused across requests.
+
+## Scripting
+
+`--json` prints a single JSON object on stdout; progress and messages go to stderr.
 
 ```sh
 alephgeo satellite --at 41.8902 12.4922 -o captures --json > result.json
 alephgeo capture create --bbox 41.8895 12.4910 41.8910 12.4940 -o captures --yes --json
 ```
 
-For all options, run `alephgeo COMMAND --help`, such as `alephgeo capture create --help`.
+On failure the object is `{"status": "error", "error": {"code": ..., "message": ...}}`. Codes include `invalid_arguments`, `place_not_found`, `ambiguous_place` (with `candidates`), `no_coverage`, `provider_unavailable`, `request_failed`, and `interrupted`. If files were already saved, `folder` points to them.
+
+Exit codes: `0` success, `1` request failed, `2` invalid arguments, `130` interrupted.
+
+Set `NO_COLOR` to disable colored output.
