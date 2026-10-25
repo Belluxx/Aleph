@@ -5,6 +5,7 @@ import json
 import math
 import os
 import shutil
+import ssl
 import sys
 import tempfile
 import threading
@@ -20,6 +21,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
+import truststore
 from PIL import Image
 
 DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "aleph"
@@ -131,7 +133,10 @@ class Client:
             if self.request_log:
                 self.request_log("GET", address, attempt)
             try:
-                with urlopen(Request(address, headers={"User-Agent": user_agent}), timeout=timeout) as response:
+                # Trust the OS certificate store: python.org builds for macOS ship with none of their own.
+                # One context per request: truststore locks a context for the whole handshake.
+                with urlopen(Request(address, headers={"User-Agent": user_agent}), timeout=timeout,
+                             context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)) as response:
                     if destination is None:
                         result = response.read()
                     else:
