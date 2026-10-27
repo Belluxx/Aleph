@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from src.common import Client, contained
+from alephgeo.common import Client, contained
 
 
 def response(data, length):
@@ -22,9 +22,9 @@ class DownloadTests(unittest.TestCase):
             target = Path(directory) / "region.pbf"
             target.write_bytes(b"previous snapshot")
             with (
-                patch("src.common.urlopen", side_effect=lambda *a, **k: response(b"short", 20)) as get,
-                patch("src.common.time.sleep"),
-                patch("src.common.time.monotonic", side_effect=count(step=10)),
+                patch("alephgeo.common.urlopen", side_effect=lambda *a, **k: response(b"short", 20)) as get,
+                patch("alephgeo.common.time.sleep"),
+                patch("alephgeo.common.time.monotonic", side_effect=count(step=10)),
                 self.assertRaisesRegex(OSError, "Incomplete download"),
             ):
                 Client().get("https://example.test/region", destination=target)
@@ -41,9 +41,9 @@ class DownloadTests(unittest.TestCase):
                 self.assertEqual(target.read_bytes(), b"previous snapshot")
 
             with (
-                patch("src.common.urlopen", side_effect=[response(b"short", 20), response(b"complete", 8)]),
-                patch("src.common.time.sleep"),
-                patch("src.common.time.monotonic", side_effect=count(step=10)),
+                patch("alephgeo.common.urlopen", side_effect=[response(b"short", 20), response(b"complete", 8)]),
+                patch("alephgeo.common.time.sleep"),
+                patch("alephgeo.common.time.monotonic", side_effect=count(step=10)),
             ):
                 result = Client().get("https://example.test/region", destination=target, progress=progress)
             self.assertEqual(result, target)
@@ -59,7 +59,7 @@ class DownloadTests(unittest.TestCase):
                 raise KeyboardInterrupt
 
             with (
-                patch("src.common.urlopen", return_value=response(b"new snapshot", 12)) as get,
+                patch("alephgeo.common.urlopen", return_value=response(b"new snapshot", 12)) as get,
                 self.assertRaises(KeyboardInterrupt),
             ):
                 Client().get("https://example.test/region", destination=target, progress=interrupt)
@@ -73,9 +73,9 @@ class DownloadTests(unittest.TestCase):
                 raise ValueError("Unreadable response.")
 
         with (
-            patch("src.common.urlopen", side_effect=[response(b"garbage", 7), response(b"good", 4)]) as get,
-            patch("src.common.time.sleep"),
-            patch("src.common.time.monotonic", side_effect=count(step=10)),
+            patch("alephgeo.common.urlopen", side_effect=[response(b"garbage", 7), response(b"good", 4)]) as get,
+            patch("alephgeo.common.time.sleep"),
+            patch("alephgeo.common.time.monotonic", side_effect=count(step=10)),
         ):
             self.assertEqual(Client().get("https://example.test/meta", check=check), b"good")
         self.assertEqual(get.call_count, 2)

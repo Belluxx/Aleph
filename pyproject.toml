@@ -11,11 +11,10 @@ requires-python = ">=3.11"
 dependencies = ["Pillow>=10", "numpy>=1.25", "truststore>=0.10"]
 
 [project.scripts]
-alephgeo = "aleph:main"
+alephgeo = "alephgeo.main:main"
 
-[tool.setuptools]
-py-modules = ["aleph"]
-packages = ["src"]
+[tool.setuptools.packages.find]
+include = ["alephgeo*"]
 
 [tool.setuptools.package-data]
-src = ["web/*", "web/icons/*"]
+alephgeo = ["web/*", "web/icons/*"]

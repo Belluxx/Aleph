@@ -7,10 +7,10 @@ import sys
 import textwrap
 from pathlib import Path
 
-from src import capture, places, quick
-from src.cli import parser
-from src.common import CachedClient, Client, Progress, RequestError, now
-from src.geo import bounds, corners, vertices
+from . import capture, places, quick
+from .cli import parser
+from .common import CachedClient, Client, Progress, RequestError, now
+from .geo import bounds, corners, vertices
 
 
 def style(text, code="1"):
@@ -188,7 +188,7 @@ def main(argv=None):
             return 0
         args = command.parse_args(argv)
         if args.command == "dashboard":
-            from src import dashboard
+            from . import dashboard
 
             return dashboard.serve(args.output, args.port, cache_dir=args.cache_dir, refresh=args.refresh,
                                    open_browser=not args.no_browser)

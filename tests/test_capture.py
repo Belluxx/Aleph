@@ -10,9 +10,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 
-from src import capture, quick, streetview
-from src.common import MissingImagery
-from src.geo import coordinate, corners
+from alephgeo import capture, quick, streetview
+from alephgeo.common import MissingImagery
+from alephgeo.geo import coordinate, corners
 
 
 def image_bytes(size=(256, 256)):
@@ -112,7 +112,7 @@ class CaptureTests(unittest.TestCase):
         client = Mock()
         client.get.return_value = image_bytes()
         with (
-            patch("src.capture.satellite.merge", side_effect=OSError("disk full")),
+            patch("alephgeo.capture.satellite.merge", side_effect=OSError("disk full")),
             self.assertRaisesRegex(OSError, "disk full"),
         ):
             capture.download(run, self.folder, client, self.progress)

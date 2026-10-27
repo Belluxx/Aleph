@@ -9,8 +9,8 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from src import quick, routes
-from src.geo import Line, destination
+from alephgeo import quick, routes
+from alephgeo.geo import Line, destination
 
 
 class RouteSamplingTests(unittest.TestCase):
@@ -103,10 +103,10 @@ class BranchedStreetTests(unittest.TestCase):
                  ({"stops": 1, "route": 2}, [2], 1, [2])]
         for options, section_ids, requested, photographed in cases:
             with (self.subTest(options=options), TemporaryDirectory() as directory,
-                  patch("src.quick.places.choose", return_value=self.place),
-                  patch("src.quick.coverage", return_value=list(views.values())) as coverage,
-                  patch("src.quick.streetview.metadata_url", side_effect=lambda pano_id: pano_id),
-                  patch("src.quick.streetview.parse_metadata", side_effect=lambda data, **kwargs: data)):
+                  patch("alephgeo.quick.places.choose", return_value=self.place),
+                  patch("alephgeo.quick.coverage", return_value=list(views.values())) as coverage,
+                  patch("alephgeo.quick.streetview.metadata_url", side_effect=lambda pano_id: pano_id),
+                  patch("alephgeo.quick.streetview.parse_metadata", side_effect=lambda data, **kwargs: data)):
                 result = quick.street_photos(self.client, directory, lambda *args: None,
                                              street="Test Street", view="both", **options)
                 self.assertEqual([section["route"] for section in result["routes"]], section_ids)

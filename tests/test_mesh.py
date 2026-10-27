@@ -9,9 +9,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from src import capture, mesh
-from src.common import MissingImagery, write_bytes
-from src.geo import corners
+from alephgeo import capture, mesh
+from alephgeo.common import MissingImagery, write_bytes
+from alephgeo.geo import corners
 
 RADIUS = 6371010.0
 AREA = (-1e-4, -1e-4, 1e-4, 1e-4)  # About 22 m square around latitude 0, longitude 0.

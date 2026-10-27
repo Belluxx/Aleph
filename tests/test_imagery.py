@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from src import geo, layers, satellite, terrain
+from alephgeo import geo, layers, satellite, terrain
 
 
 def quiet(*args):
@@ -63,7 +63,7 @@ class SatelliteTests(unittest.TestCase):
             with canvas.crop((3, 7, 304, 266)) as expected:
                 # Force BigTIFF using a small file; never allocate gigabytes.
                 for limit, magic in ((2**32, b"II*\0"), (1, b"II+\0")):
-                    with self.subTest(format=magic), patch("src.satellite.TIFF_LIMIT", limit):
+                    with self.subTest(format=magic), patch("alephgeo.satellite.TIFF_LIMIT", limit):
                         satellite.merge(stage, folder, quiet, area)
                         self.assertEqual((folder / "satellite.tif").read_bytes()[:4], magic)
                         with Image.open(folder / "satellite.png") as png:

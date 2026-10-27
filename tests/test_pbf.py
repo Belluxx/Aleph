@@ -7,8 +7,8 @@ import zlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from src import pbf
-from src.geo import corners
+from alephgeo import pbf
+from alephgeo.geo import corners
 
 
 def uint(value):
