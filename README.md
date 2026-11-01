@@ -18,14 +18,6 @@ Aleph does two things:
 
 This was born as a way to let LLMs quickly gather information from the physical world, but you can just use it to have piece of the Earth on your laptop.
 
-> [!CAUTION]  
-> Data licenses:
-> - **Street View, satellite imagery, 3D meshes**: © Google and its providers. Downloading them goes against Google's terms. Not affiliated with Google. You are responsible for how you use this tool and the data it downloads.
-> - **OSM data and geocoding**: [ODbL](https://opendatacommons.org/licenses/odbl/). Commercial use allowed with "© OpenStreetMap contributors" credit. Shared modified databases must stay ODbL.
-> - **Terrain**: [AWS Terrain Tiles](https://github.com/tilezen/joerd/blob/master/docs/attribution.md), open sources. Commercial use allowed with the credits listed there.
-> 
-> Also, this tool uses undocumented APIs so it may break or hit rate limits.
-
 <p align="center">
   <img src="resources/show.svg" width="800">
 </p>
@@ -41,8 +33,6 @@ python3 -m venv .venv
 source .venv/bin/activate  # fish: source .venv/bin/activate.fish
 python -m pip install .
 ```
-
-The activation script is POSIX, so fish needs its own variant as shown above.
 
 Then test with
 
@@ -72,3 +62,11 @@ alephgeo satellite --place "Colosseum, Rome" --best-match -o captures
 `--best-match` selects the first match. Each download is saved in a new folder inside `captures`.
 
 See the [CLI docs](docs/cli.md) for examples and details.
+
+> [!CAUTION]  
+> Data licenses:
+> - **Street View, satellite imagery, 3D meshes**: © Google and its providers. Downloading them goes against Google's terms. Not affiliated with Google. You are responsible for how you use this tool and the data it downloads.
+> - **OSM data and geocoding**: [ODbL](https://opendatacommons.org/licenses/odbl/). Commercial use allowed with "© OpenStreetMap contributors" credit. Shared modified databases must stay ODbL.
+> - **Terrain**: [AWS Terrain Tiles](https://github.com/tilezen/joerd/blob/master/docs/attribution.md), open sources. Commercial use allowed with the credits listed there.
+> 
+> Also, this tool uses undocumented APIs so it may break or hit rate limits.
