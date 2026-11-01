@@ -38,9 +38,11 @@ Requires Python 3.11+. The only dependencies are Pillow, numpy, and truststore. 
 git clone https://github.com/Belluxx/Aleph.git
 cd Aleph
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # fish: source .venv/bin/activate.fish
 python -m pip install .
 ```
+
+The activation script is POSIX, so fish needs its own variant as shown above.
 
 Then test with
 
